@@ -62,7 +62,8 @@ screenlog_test_setup() {
   export STUB_LOG_DIR="$base/stub-log"
   export STUB_REMOTE_DIR="$base/remote"
   mkdir -p "$SCREENLOG_DATA_DIR" "$base/etc" "$base/bin" "$TMPDIR" "$STUB_LOG_DIR" "$STUB_REMOTE_DIR" \
-    "$SCREENLOG_SYSROOT/etc/systemd/system" "$SCREENLOG_SYSROOT/run/user/1000" "$SCREENLOG_SYSROOT/tmp/.X11-unix"
+    "$SCREENLOG_SYSROOT/etc/systemd/system" "$SCREENLOG_SYSROOT/run/user/1000" "$SCREENLOG_SYSROOT/tmp/.X11-unix" \
+    "$SCREENLOG_SYSROOT/run/systemd/system"
   mkdir -p "$STUB_REMOTE_DIR/Screenlog/rahim-uddin"   # what install.sh's rclone mkdir leaves behind
   cp "$REPO_ROOT/tests/fixtures/screenlog.conf" "$SCREENLOG_CONFIG"
   cp "$REPO_ROOT/tests/fixtures/rclone.conf" "$SCREENLOG_RCLONE_CONF"

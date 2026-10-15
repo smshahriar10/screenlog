@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# stub: apt-get (records argv; STUB_APT_FAIL=1 fails the install)
+set -euo pipefail
+{ printf '%q ' "$0" "$@"; printf '\n'; } >>"${STUB_LOG_DIR:?}/apt-get.log"
+if [[ ${STUB_APT_FAIL:-0} != 0 && ${1:-} == install ]]; then echo "E: Unable to locate package" >&2; exit 100; fi
+exit 0

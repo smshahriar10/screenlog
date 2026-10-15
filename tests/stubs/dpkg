@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# stub: dpkg --print-architecture / dpkg -i
+set -euo pipefail
+{ printf '%q ' "$0" "$@"; printf '\n'; } >>"${STUB_LOG_DIR:?}/dpkg.log"
+case ${1:-} in
+  --print-architecture) printf '%s\n' "${STUB_DPKG_ARCH:-amd64}" ;;
+  *) exit 0 ;;
+esac

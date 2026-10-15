@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# stub: dpkg-query -W -f=FMT PKG. STUB_DPKG_INSTALLED lists packages that count as installed
+# (space separated; "all" = everything).
+set -euo pipefail
+{ printf '%q ' "$0" "$@"; printf '\n'; } >>"${STUB_LOG_DIR:?}/dpkg-query.log"
+pkg=${*: -1}
+fmt=""
+for a in "$@"; do case $a in -f=*) fmt=${a#-f=} ;; esac; done
+if [[ ${STUB_DPKG_INSTALLED:-} == all || " ${STUB_DPKG_INSTALLED:-} " == *" $pkg "* ]]; then
+  case $fmt in
+    *Status*) printf 'install ok installed' ;;
+    *Version*) printf '%s' "${STUB_DPKG_VERSION:-1.60.1+dfsg-3ubuntu0.24.04.1}" ;;
+    *) printf 'install ok installed' ;;
+  esac
+  exit 0
+fi
+echo "dpkg-query: no packages found matching $pkg" >&2
+exit 1
