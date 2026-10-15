@@ -1,0 +1,6 @@
+timestamp,status,idle_seconds,file,detail
+2026-10-15T09:05:00+06:00,shot,30,09-05-00.jpg,
+2026-10-15T09:15:00+06:00,no_session,,,
+2026-10-15T09:25:00+06:00,unsupported_session,,,
+2026-10-15T09:35:00+06:00,error,,,ffmpeg exit 1
+2026-10-15T09:45:00+06:00,error,2,,ffmpeg timeout

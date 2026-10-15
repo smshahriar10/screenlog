@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# stub: curl, for the shapes lib/discord.sh and install.sh use. The webhook URL must arrive via
+# -K FILE (url = "..."); it is recorded raw in curl.url, never in the argv log.
+# STUB_CURL_PLAN="7 429 200": the result of call 1, 2, 3, ... (a value below 100 is a curl exit
+# code; above it is the HTTP status; beyond the plan every call gets 200). Bodies and headers
+# are canned per status; STUB_CURL_RETRY_AFTER sets the 429 body's retry_after,
+# STUB_CURL_RETRY_AFTER_HEADER adds a Retry-After header.
+set -euo pipefail
+{ printf '%q ' "$0" "$@"; printf '\n'; } >>"${STUB_LOG_DIR:?}/curl.log"
+n=$(grep -c '' "$STUB_LOG_DIR/curl.log")
+read -r -a plan <<< "${STUB_CURL_PLAN:-}"
+code=${plan[n-1]:-200}
+out=""; hdr=""; wfmt=""; cfg=""; method=GET; forms=()
+while (($#)); do
+  case $1 in
+    -o) out=$2; shift 2 ;;
+    -D) hdr=$2; shift 2 ;;
+    -w) wfmt=$2; shift 2 ;;
+    -K) cfg=$2; shift 2 ;;
+    -X) method=$2; shift 2 ;;
+    -F) forms+=("$2"); method=POST; shift 2 ;;
+    -I) method=HEAD; shift ;;
+    -A|-H|-d|--data|--data-raw|-m|--max-time|--connect-timeout|--retry|--retry-delay|-u) shift 2 ;;
+    -s|-S|-f|-L|-sS|-sSf|-fsSL|-fsS) shift ;;
+    http://*|https://*) printf '%s\n' "$1" >>"$STUB_LOG_DIR/curl.url"; shift ;;
+    *) shift ;;
+  esac
+done
+if [[ -n $cfg ]]; then
+  [[ -r $cfg ]] || { echo "stub curl: config $cfg missing" >&2; exit 26; }
+  sed -n 's/^url = "\(.*\)"$/\1/p' "$cfg" >>"$STUB_LOG_DIR/curl.url"
+  printf '%s\n' "$(stat -c %a "$cfg")" >>"$STUB_LOG_DIR/curl.cfgmode"
+fi
+if [[ $method == POST ]]; then
+  p=$(grep -c '' "$STUB_LOG_DIR/curl.posts" 2>/dev/null || echo 0)
+  p=$((p + 1))
+  printf '%s\n' "$n" >>"$STUB_LOG_DIR/curl.posts"
+  for f in "${forms[@]}"; do
+    case $f in
+      payload_json=\<*) v=${f#payload_json=<}; v=${v%%;*}; cp "$v" "$STUB_LOG_DIR/curl.payload.$p.json" ;;
+      files\[0\]=@*) v=${f#files\[0\]=@}; v=${v%%;*}; printf '%s %s %s\n' "$p" "$v" "$(stat -c %s "$v")" >>"$STUB_LOG_DIR/curl.attach"; cp "$v" "$STUB_LOG_DIR/curl.attach.$p" ;;
+    esac
+  done
+fi
+if (( code < 100 )); then
+  echo "curl: ($code) Failed to connect to discord.com port 443: Connection refused" >&2
+  exit "$code"
+fi
+body=""
+case $code in
+  200) if [[ $method == POST ]]; then body='{"id":"1300000000000000000","type":0,"content":"x"}'; else body='{"id":"123456789012345678","type":1,"name":"screenlog","channel_id":"1200000000000000000","guild_id":"1100000000000000000","token":"TESTtoken_abcdefghijklmnopqrstuvwxyz0123456789-ABCDEFGHIJKLMNOPQRSTUVWX"}'; fi ;;
+  204) body="" ;;
+  400) body='{"message":"Invalid Form Body","code":50035}' ;;
+  401) body='{"message":"Invalid Webhook Token","code":50027}' ;;
+  404) body='{"message":"Unknown Webhook","code":10015}' ;;
+  413) body='{"message":"Request entity too large","code":40005}' ;;
+  429) body="{\"message\":\"You are being rate limited.\",\"retry_after\":${STUB_CURL_RETRY_AFTER:-0.01},\"global\":false}" ;;
+  5*) body='{"message":"Internal Server Error","code":0}' ;;
+  *) body='{}' ;;
+esac
+if [[ -n $out ]]; then printf '%s' "$body" > "$out"; fi
+if [[ -n $hdr ]]; then
+  { printf 'HTTP/2 %s\r\ncontent-type: application/json\r\n' "$code"
+    [[ -n ${STUB_CURL_RETRY_AFTER_HEADER:-} ]] && printf 'retry-after: %s\r\n' "$STUB_CURL_RETRY_AFTER_HEADER"
+    printf '\r\n'; } > "$hdr"
+fi
+if [[ -n $wfmt ]]; then printf '%s' "$code"; fi
+exit 0

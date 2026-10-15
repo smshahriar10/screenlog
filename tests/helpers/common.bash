@@ -37,6 +37,13 @@ source "$REPO_ROOT/lib/drive.sh"
 source "$REPO_ROOT/lib/upload.sh"
 # shellcheck source=lib/retention.sh
 source "$REPO_ROOT/lib/retention.sh"
+# shellcheck source=lib/discord.sh
+source "$REPO_ROOT/lib/discord.sh"
+# shellcheck source=lib/sheet.sh
+source "$REPO_ROOT/lib/sheet.sh"
+# shellcheck source=lib/report.sh
+source "$REPO_ROOT/lib/report.sh"
+SCREENLOG_VERSION=$(<"$REPO_ROOT/VERSION")
 
 # screenlog_test_setup: the base dir is BATS_TEST_TMPDIR (per test). From setup_file, where bats
 # 1.10 does not set BATS_TEST_TMPDIR, export SCREENLOG_TEST_BASE_DIR="$BATS_FILE_TMPDIR/filesetup" first.
@@ -52,6 +59,7 @@ screenlog_test_setup() {
   export STUB_REMOTE_DIR="$base/remote"
   mkdir -p "$SCREENLOG_DATA_DIR" "$base/etc" "$base/bin" "$TMPDIR" "$STUB_LOG_DIR" "$STUB_REMOTE_DIR" \
     "$SCREENLOG_SYSROOT/etc/systemd/system" "$SCREENLOG_SYSROOT/run/user/1000" "$SCREENLOG_SYSROOT/tmp/.X11-unix"
+  mkdir -p "$STUB_REMOTE_DIR/Screenlog/rahim-uddin"   # what install.sh's rclone mkdir leaves behind
   cp "$REPO_ROOT/tests/fixtures/screenlog.conf" "$SCREENLOG_CONFIG"
   cp "$REPO_ROOT/tests/fixtures/rclone.conf" "$SCREENLOG_RCLONE_CONF"
   chmod 600 "$SCREENLOG_CONFIG" "$SCREENLOG_RCLONE_CONF"
@@ -97,6 +105,18 @@ unset_config() {
 # append_config_line RAW: append a raw line (for syntax and injection tests).
 append_config_line() { printf '%s\n' "$1" >> "${SCREENLOG_CONFIG:?}"; }
 
+# make_day DAY [FIXTURE.csv]: shots/DAY/samples.csv from the fixture (its 2026-10-15 rewritten to
+# DAY) plus one tiny JPEG per shot row. Without a fixture: an empty day folder.
+make_day() {
+  local day=$1 csv=${2:-} dir="${SCREENLOG_DATA_DIR:?}/shots/$1" tpl="${SCREENLOG_TEST_BASE:?}/tiny.jpg" f
+  mkdir -p "$dir"
+  [ -z "$csv" ] && return 0
+  sed "s/^2026-10-15T/${day}T/" "$REPO_ROOT/tests/fixtures/csv/$csv" > "$dir/samples.csv"
+  [ -f "$tpl" ] || convert -size 64x48 xc:'#336699' -quality 50 "jpeg:$tpl"
+  while IFS= read -r f; do cp "$tpl" "$dir/$f"; done < <(awk -F, 'NR > 1 && $2 == "shot" && $4 != "" { print $4 }' "$dir/samples.csv")
+  return 0
+}
+
 mark_reported() {
   mkdir -p "${SCREENLOG_DATA_DIR:?}/state"
   printf '%s\n' "$1" >> "$SCREENLOG_DATA_DIR/state/reported-days"
@@ -106,6 +126,9 @@ mark_reported() {
 stub_calls() {
   if [ -f "${STUB_LOG_DIR:?}/$1.log" ]; then grep -c '' "$STUB_LOG_DIR/$1.log"; else echo 0; fi
 }
+
+# stub_reset NAME: forget a stub's recorded calls.
+stub_reset() { rm -f "${STUB_LOG_DIR:?}/$1".*; }
 
 # stub_call NAME N: the %q-quoted argv of invocation N.
 stub_call() { sed -n "${2}p" "${STUB_LOG_DIR:?}/$1.log"; }
@@ -120,6 +143,12 @@ stub_argv() {
 
 # stub_env NAME N: the DISPLAY/XAUTHORITY line recorded by invocation N of an X client stub.
 stub_env() { sed -n "${2}p" "${STUB_LOG_DIR:?}/$1.env"; }
+
+# curl_posts: number of POSTs the curl stub received; curl_payload N: its payload_json.
+curl_posts() { if [ -f "${STUB_LOG_DIR:?}/curl.posts" ]; then grep -c '' "$STUB_LOG_DIR/curl.posts"; else echo 0; fi; }
+curl_payload() { cat "${STUB_LOG_DIR:?}/curl.payload.$1.json"; }
+curl_content() { jq -r '.content' "${STUB_LOG_DIR:?}/curl.payload.$1.json"; }
+curl_attach() { cat "${STUB_LOG_DIR:?}/curl.attach" 2>/dev/null || true; }
 
 # refute_secrets: after `run`, neither fixture secret may appear in the output.
 refute_secrets() {
