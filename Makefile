@@ -86,7 +86,7 @@ endif
 
 lint-native:
 	shellcheck -x -P SCRIPTDIR:. -f gcc $(SCRIPTS) $(BATS_FILES)
-	@! grep -rnE 'set -x|set -o xtrace' bin lib install.sh uninstall.sh 2>/dev/null | grep -vE ':[0-9]+:[[:space:]]*#' \
+	@! grep -rnE 'set -[A-Za-z]*x([[:space:]]|$$)|set -o xtrace|bash -x' bin lib install.sh uninstall.sh 2>/dev/null | grep -vE ':[0-9]+:[[:space:]]*#' \
 	  || { echo "lint: 'set -x' is not allowed"; exit 1; }
 	@echo "lint: ok"
 

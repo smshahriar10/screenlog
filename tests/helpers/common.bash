@@ -160,4 +160,8 @@ refute_secrets() {
   refute_output --partial TESTtoken
   refute_output --partial RCLONETOKEN
   refute_output --partial RCLONESECRET
+  [[ ${stderr:-} != *TESTtoken* && ${stderr:-} != *RCLONETOKEN* && ${stderr:-} != *RCLONESECRET* ]]
 }
+
+# need_root: tests that drop privileges with setpriv only make sense as root.
+need_root() { (( EUID == 0 )) || skip "needs root to drop privileges"; }

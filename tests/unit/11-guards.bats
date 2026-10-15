@@ -18,12 +18,12 @@ src_files() {
 offending() {
   local pat=$1
   shift
-  grep -nE "$pat" "$@" 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -v 'guard:ok' || true
+  grep -HnE "$pat" "$@" 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -v 'guard:ok' || true
 }
 
 @test "guards: no set -x or xtrace anywhere in the scripts" {
   mapfile -t files < <(src_files)
-  run offending 'set -x|set -o xtrace' "${files[@]}"
+  run offending 'set -[A-Za-z]*x([[:space:]]|$)|set -o xtrace|bash -x' "${files[@]}"
   assert_output ""
 }
 
@@ -42,7 +42,7 @@ offending() {
 
 @test "guards: the code never assigns PATH" {
   mapfile -t files < <(src_files)
-  run offending '^[[:space:]]*(export )?PATH=' "${files[@]}"
+  run offending '(^|[^A-Za-z0-9_])PATH\+?=' "${files[@]}"
   assert_output ""
 }
 
@@ -99,8 +99,11 @@ offending() {
 
 @test "guards: the test image mirrors install.sh's apt package list" {
   [ -f "$REPO_ROOT/install.sh" ] || skip "install.sh arrives in phase 6"
-  local mirror apt
-  mirror=$(sed -n 's/^#   \(ffmpeg .*\)$/\1/p' "$REPO_ROOT/tests/Dockerfile" | head -n1)
+  local mirror apt comment
+  # the first package line of the RUN apt-get install, and the comment that documents it
+  mirror=$(awk '/apt-get install -y --no-install-recommends/ { getline; sub(/^[ \t]+/, ""); sub(/[ \t]*\\$/, ""); print; exit }' "$REPO_ROOT/tests/Dockerfile")
+  comment=$(sed -n 's/^#   \(ffmpeg .*\)$/\1/p' "$REPO_ROOT/tests/Dockerfile" | head -n1)
   apt=$(sed -n 's/^APT_PACKAGES="\(.*\)"$/\1/p' "$REPO_ROOT/install.sh")
   assert_equal "$apt" "$mirror"
+  assert_equal "$apt" "$comment"
 }

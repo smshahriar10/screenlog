@@ -28,6 +28,7 @@ setup() {
 }
 
 @test "cli: every command but version and help refuses a non-root caller before reading anything" {
+  need_root
   local c
   for c in status test report upload doctor apply-config logs; do
     run setpriv --reuid=65534 --regid=65534 --clear-groups "$REPO_ROOT/bin/screenlog" "$c"

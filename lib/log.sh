@@ -20,7 +20,7 @@ _SCREENLOG_LOG_SH=1
 }
 
 # Webhook URLs are replaced by <webhook> wherever child-process output is logged.
-LOG_WEBHOOK_RE='https://[A-Za-z0-9.-]*discord(app)?\.com/api/(v[0-9]+/)?webhooks/[0-9]+/[A-Za-z0-9_.-]+'
+LOG_WEBHOOK_RE='https://[A-Za-z0-9.-]*discord(app)?\.com/api/(v[0-9]+/)?webhooks/[0-9]+/[A-Za-z0-9_-]+'
 
 RUN_STOP=0
 CHILD_PID=""

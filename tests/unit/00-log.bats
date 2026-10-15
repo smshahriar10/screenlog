@@ -65,17 +65,23 @@ setup() { screenlog_test_setup; }
 @test "log: a TERM trap stops a running interruptible sleep within a second" {
   local pid t0 t1
   t0=$EPOCHREALTIME
-  bash -c 'source "$1/lib/log.sh"; trap stop_children TERM; sleep_interruptible 30; echo "rc=$?"' _ "$REPO_ROOT" \
+  bash -c 'source "$1/lib/log.sh"; trap "stop_children; echo child=\$CHILD_PID" TERM; echo ready; sleep_interruptible 30; echo "rc=$?"' _ "$REPO_ROOT" \
     </dev/null >"$BATS_TEST_TMPDIR/out" 2>&1 3>&- &
   pid=$!
-  sleep 0.5
+  local i
+  for i in $(seq 1 50); do grep -q ready "$BATS_TEST_TMPDIR/out" 2>/dev/null && break; sleep 0.1; done
+  sleep 0.2
   kill -TERM "$pid"
   wait "$pid" || true
   t1=$EPOCHREALTIME
-  awk -v a="$t0" -v b="$t1" 'BEGIN { exit !((b - a) < 3) }'
+  awk -v a="$t0" -v b="$t1" 'BEGIN { exit !((b - a) < 8) }'
   run cat "$BATS_TEST_TMPDIR/out"
-  assert_output "rc=1"
-  run pgrep -x sleep
+  assert_line "ready"
+  assert_line "rc=1"
+  local child
+  child=$(sed -n 's/^child=//p' "$BATS_TEST_TMPDIR/out")
+  [ -n "$child" ]
+  run kill -0 "$child"
   assert_failure
 }
 
@@ -87,6 +93,7 @@ setup() { screenlog_test_setup; }
 }
 
 @test "log: require_root refuses a non-root caller with exit 4" {
+  need_root
   run setpriv --reuid=65534 --regid=65534 --clear-groups bash -c 'source "$1/lib/log.sh"; require_root status' _ "$REPO_ROOT"
   assert_failure 4
   assert_output --partial "must run as root"

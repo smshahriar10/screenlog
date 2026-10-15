@@ -227,6 +227,7 @@ dev-pc-03 · v1.0.0"
 }
 
 @test "report: every command but version and help needs root" {
+  need_root
   run setpriv --reuid=65534 --regid=65534 --clear-groups "$REPO_ROOT/bin/screenlog" report --pending
   assert_failure 4
   assert_output --partial "must run as root"

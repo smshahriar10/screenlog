@@ -13,6 +13,16 @@ TIME_FAKE_SRC=""
 TIME_DOW_NAMES=(Mon Tue Wed Thu Fri Sat Sun)
 TIME_MONTH_NAMES=(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec)
 
+# time_init: validate SCREENLOG_NOW once in the main shell (a die inside $( ) would only kill
+# the subshell). Called by config_load.
+time_init() {
+  if [[ -n ${SCREENLOG_NOW:-} ]]; then
+    TIME_FAKE_EPOCH=$(date -d "$SCREENLOG_NOW" +%s 2>/dev/null) \
+      || die "$EXIT_USAGE" "SCREENLOG_NOW is not a date: $SCREENLOG_NOW"
+    TIME_FAKE_SRC=$SCREENLOG_NOW
+  fi
+}
+
 # time_now_epoch: seconds since the epoch, real or faked.
 time_now_epoch() {
   if [[ -n ${SCREENLOG_NOW:-} ]]; then
@@ -27,20 +37,30 @@ time_now_epoch() {
   fi
 }
 
+# time_epoch_arg [EPOCH]: the epoch to format - the argument, or now; never empty.
+time_epoch_arg() {
+  local e=${1:-}
+  [[ -n $e ]] || e=$(time_now_epoch)
+  [[ $e =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$e"
+}
+
 # Formatting helpers take an optional epoch argument (callers in the daemon fetch it once per sample).
-time_day()  { printf '%(%F)T\n' "${1:-$(time_now_epoch)}"; }
-time_hms()  { printf '%(%H-%M-%S)T\n' "${1:-$(time_now_epoch)}"; }
-time_hhmm() { printf '%(%H:%M)T\n' "${1:-$(time_now_epoch)}"; }
+time_day()  { local e; e=$(time_epoch_arg "${1:-}") || return 1; printf '%(%F)T\n' "$e"; }
+time_hms()  { local e; e=$(time_epoch_arg "${1:-}") || return 1; printf '%(%H-%M-%S)T\n' "$e"; }
+time_hhmm() { local e; e=$(time_epoch_arg "${1:-}") || return 1; printf '%(%H:%M)T\n' "$e"; }
 time_dow() {
-  local u
-  printf -v u '%(%u)T' "${1:-$(time_now_epoch)}"
+  local e u
+  e=$(time_epoch_arg "${1:-}") || return 1
+  printf -v u '%(%u)T' "$e"
   printf '%s\n' "${TIME_DOW_NAMES[u - 1]}"
 }
-time_clock() { printf '%(%H:%M:%S)T\n' "${1:-$(time_now_epoch)}"; }
+time_clock() { local e; e=$(time_epoch_arg "${1:-}") || return 1; printf '%(%H:%M:%S)T\n' "$e"; }
 
 # time_iso [EPOCH]: local ISO 8601 with a colon in the offset, e.g. 2026-10-15T09:12:33+06:00.
 time_iso() {
-  local e=${1:-$(time_now_epoch)} z
+  local e z
+  e=$(time_epoch_arg "${1:-}") || return 1
   printf -v z '%(%z)T' "$e"
   printf '%(%Y-%m-%dT%H:%M:%S)T%s:%s\n' "$e" "${z:0:3}" "${z:3}"
 }
@@ -52,7 +72,8 @@ time_hhmm_to_min() {
 
 # time_min_of_day [EPOCH] -> minutes since local midnight.
 time_min_of_day() {
-  local e=${1:-$(time_now_epoch)} h m
+  local e h m
+  e=$(time_epoch_arg "${1:-}") || return 1
   printf -v h '%(%H)T' "$e"
   printf -v m '%(%M)T' "$e"
   printf '%s\n' $(( 10#$h * 60 + 10#$m ))

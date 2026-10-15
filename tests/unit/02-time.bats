@@ -101,5 +101,5 @@ setup() { screenlog_test_setup; config_load; }
   local now
   now=$(time_now_epoch)
   (( now > 1700000000 ))
-  (( now - EPOCHSECONDS <= 1 ))
+  (( now <= EPOCHSECONDS && EPOCHSECONDS - now <= 1 ))
 }

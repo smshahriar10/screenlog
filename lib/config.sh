@@ -25,7 +25,7 @@ CONFIG_DQ_RE='^"([^"\\]*)"[[:space:]]*(#.*)?$'
 CONFIG_SQ_RE="^'([^']*)'[[:space:]]*(#.*)?\$"
 CONFIG_BARE_RE='^([^"'"'"'[:space:]#]*)[[:space:]]*(#.*)?$'
 CONFIG_HHMM_RE='^([01][0-9]|2[0-3]):[0-5][0-9]$'
-CONFIG_WEBHOOK_RE='^https://(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)/api/(v[0-9]+/)?webhooks/([0-9]{15,22})/([A-Za-z0-9_.-]{20,})/?$'
+CONFIG_WEBHOOK_RE='^https://(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)/api/(v[0-9]+/)?webhooks/([0-9]{15,22})/([A-Za-z0-9_-]{20,})/?$'
 CONFIG_SLUG_RE='^[a-z0-9]+(-[a-z0-9]+)*$'
 CONFIG_BWLIMIT_RE='^(off|[0-9]+(\.[0-9]+)?[kKMGT]?i?)$'
 CONFIG_DAYS="Sun Mon Tue Wed Thu Fri Sat"
@@ -182,6 +182,7 @@ config_check_int() {
     CONFIG_ERRORS+=("$key: must be an integer from $min to $max")
     return 1
   fi
+  printf -v "$key" '%d' "$(( 10#${!key} ))"   # "08" -> 8, so later arithmetic never sees a base error
 }
 
 config_check_hhmm() {
@@ -288,6 +289,7 @@ config_check() {
 # config_load: paths, then a valid config from $SCREENLOG_CONFIG or exit EXIT_CONFIG.
 config_load() {
   paths_init
+  if declare -F time_init > /dev/null; then time_init; fi
   config_check "$SCREENLOG_CONFIG" || die "$EXIT_CONFIG" "invalid config ($SCREENLOG_CONFIG)"
   REMOTE_EMPLOYEE="$RCLONE_REMOTE:$DRIVE_ROOT/$EMPLOYEE_SLUG"
 }

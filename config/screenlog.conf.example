@@ -33,6 +33,6 @@ WORK_DAYS="Sun Mon Tue Wed Thu"      # days on which "no screenshots today" is r
 GAP_ALERT_MINUTES=45                 # gaps longer than this are listed; must be > MAX_GAP_SECONDS/60
 
 # --- storage ---
-LOCAL_RETENTION_DAYS=7               # local copies deleted after this, only once uploaded and reported
+LOCAL_RETENTION_DAYS=7               # local copies deleted after this, once uploaded (and reported, or older than the 14-day report window)
 REMOTE_RETENTION_DAYS=60             # files older than this go to the Drive trash; 0 = keep forever
 UPLOAD_BWLIMIT="1M"                  # passed to rclone --bwlimit (e.g. 1M, 500k, off)
