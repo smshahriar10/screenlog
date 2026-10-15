@@ -1,2 +1,3 @@
-# $output, $status, $lines, $stderr are set by bats' `run`
-disable=SC2154
+# $output, $status, $lines, $stderr are set by bats `run`; each @test runs in its own process,
+# so "modified in a subshell" notes do not apply.
+disable=SC2154,SC2030,SC2031

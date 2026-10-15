@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# stub: loginctl. STUB_LOGINCTL_SCENARIO = x11 (default) | locked | nolockedhint | wayland |
+# none | remote | greeter | inactive. STUB_LOGINCTL_SCENARIO_FILE overrides it per call.
+set -euo pipefail
+{ printf '%q ' "$0" "$@"; printf '\n'; } >>"${STUB_LOG_DIR:?}/loginctl.log"
+scenario=${STUB_LOGINCTL_SCENARIO:-x11}
+if [[ -n ${STUB_LOGINCTL_SCENARIO_FILE:-} && -r ${STUB_LOGINCTL_SCENARIO_FILE:-} ]]; then
+  scenario=$(<"$STUB_LOGINCTL_SCENARIO_FILE")
+fi
+case $scenario in
+  none) sessions="" ;;
+  remote) sessions="7" ;;
+  greeter) sessions="c1" ;;
+  *) sessions="c1 3 7" ;;
+esac
+prop() {   # ID KEY
+  case $1 in
+    3) case $2 in
+         Seat) echo seat0 ;; Remote) echo no ;; Class) echo user ;;
+         State) if [[ $scenario == inactive ]]; then echo online; else echo active; fi ;;
+         Type) if [[ $scenario == wayland ]]; then echo wayland; else echo x11; fi ;;
+         User) echo 1000 ;; Name) echo rahim ;; Scope) echo session-3.scope ;;
+         LockedHint) case $scenario in locked) echo yes ;; nolockedhint) echo "" ;; *) echo no ;; esac ;;
+         Display) echo "" ;;
+         *) echo "" ;;
+       esac ;;
+    c1) case $2 in
+         Seat) echo seat0 ;; Remote) echo no ;; Class) echo greeter ;; State) echo active ;;
+         Type) echo wayland ;; User) echo 128 ;; Name) echo gdm ;; Scope) echo session-c1.scope ;;
+         LockedHint) echo no ;; *) echo "" ;;
+       esac ;;
+    7) case $2 in
+         Seat) echo "" ;; Remote) echo yes ;; Class) echo user ;; State) echo active ;;
+         Type) echo tty ;; User) echo 1000 ;; Name) echo rahim ;; Scope) echo session-7.scope ;;
+         LockedHint) echo no ;; *) echo "" ;;
+       esac ;;
+    *) echo "No session '$1' known" >&2; exit 1 ;;
+  esac
+}
+cmd=${1:-}
+shift || true
+case $cmd in
+  list-sessions)
+    for s in $sessions; do
+      printf '%7s %5s %-8s %-6s %s\n' "$s" "$(prop "$s" User)" "$(prop "$s" Name)" "$(prop "$s" Seat)" "$(prop "$s" State)"
+    done ;;
+  show-session)
+    id=$1; shift
+    [[ " $sessions " == *" $id "* ]] || { echo "Could not get properties: No such session" >&2; exit 1; }
+    value=0; keys=()
+    while (($#)); do
+      case $1 in
+        -p|--property) keys+=("$2"); shift 2 ;;
+        --value) value=1; shift ;;
+        *) shift ;;
+      esac
+    done
+    for k in "${keys[@]}"; do
+      if (( value )); then prop "$id" "$k"; else printf '%s=%s\n' "$k" "$(prop "$id" "$k")"; fi
+    done ;;
+  *) echo "stub loginctl: unsupported: $cmd" >&2; exit 1 ;;
+esac

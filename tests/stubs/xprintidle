@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# stub: xprintidle. STUB_IDLE_MS (default 1500); STUB_XPRINTIDLE_EXIT=1 fails always;
+# STUB_XPRINTIDLE_FAIL_DISPLAY=:N fails only on that display; STUB_XPRINTIDLE_REQUIRE_XAUTH=1
+# fails unless XAUTHORITY is set and non-empty.
+set -euo pipefail
+{ printf '%q ' "$0" "$@"; printf '\n'; } >>"${STUB_LOG_DIR:?}/xprintidle.log"
+printf 'DISPLAY=%s XAUTHORITY=%s\n' "${DISPLAY-<unset>}" "${XAUTHORITY-<unset>}" >>"${STUB_LOG_DIR:?}/xprintidle.env"
+if [[ ${STUB_XPRINTIDLE_EXIT:-0} != 0 ]]; then echo "couldn't open display" >&2; exit 1; fi
+if [[ -n ${STUB_XPRINTIDLE_FAIL_DISPLAY:-} && ${DISPLAY:-} == "$STUB_XPRINTIDLE_FAIL_DISPLAY" ]]; then
+  echo "couldn't open display" >&2; exit 1
+fi
+if [[ ${STUB_XPRINTIDLE_REQUIRE_XAUTH:-0} != 0 && -z ${XAUTHORITY:-} ]]; then
+  echo "couldn't open display" >&2; exit 1
+fi
+printf '%s\n' "${STUB_IDLE_MS:-1500}"

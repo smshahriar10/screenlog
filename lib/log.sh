@@ -105,15 +105,14 @@ run_child() {
   if (( RUN_STOP )); then
     kill -TERM "$CHILD_PID" 2>/dev/null
   fi
-  wait "$CHILD_PID"
-  rc=$?
+  if wait "$CHILD_PID"; then rc=0; else rc=$?; fi
   CHILD_PID=""
   return "$rc"
 }
 
 # sleep_interruptible SECONDS: returns 1 when the sleep was cut short by a stop request.
 sleep_interruptible() {
-  run_child sleep "$1"
+  run_child sleep "$1" || true
   (( RUN_STOP == 0 ))
 }
 

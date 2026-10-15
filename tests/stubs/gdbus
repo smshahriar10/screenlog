@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# stub: gdbus call ... --dest DEST ...  STUB_GDBUS_FAIL_DEST lists bus names with no owner;
+# STUB_SCREENSAVER_ACTIVE=true|false is the GetActive answer.
+set -euo pipefail
+{ printf '%q ' "$0" "$@"; printf '\n'; } >>"${STUB_LOG_DIR:?}/gdbus.log"
+dest=""
+while (($#)); do
+  case $1 in
+    --dest) dest=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [[ " ${STUB_GDBUS_FAIL_DEST:-} " == *" $dest "* ]]; then
+  echo "Error: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name $dest was not provided by any .service files" >&2
+  exit 1
+fi
+printf '(%s,)\n' "${STUB_SCREENSAVER_ACTIVE:-false}"

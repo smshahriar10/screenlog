@@ -25,6 +25,12 @@ source "$REPO_ROOT/lib/time.sh"
 source "$REPO_ROOT/lib/gap.sh"
 # shellcheck source=lib/slug.sh
 source "$REPO_ROOT/lib/slug.sh"
+# shellcheck source=lib/session.sh
+source "$REPO_ROOT/lib/session.sh"
+# shellcheck source=lib/capture.sh
+source "$REPO_ROOT/lib/capture.sh"
+# shellcheck source=lib/sample.sh
+source "$REPO_ROOT/lib/sample.sh"
 
 # screenlog_test_setup: the base dir is BATS_TEST_TMPDIR (per test). From setup_file, where bats
 # 1.10 does not set BATS_TEST_TMPDIR, export SCREENLOG_TEST_BASE_DIR="$BATS_FILE_TMPDIR/filesetup" first.
@@ -97,6 +103,17 @@ stub_calls() {
 
 # stub_call NAME N: the %q-quoted argv of invocation N.
 stub_call() { sed -n "${2}p" "${STUB_LOG_DIR:?}/$1.log"; }
+
+# stub_argv NAME N: the raw argv of invocation N, space-joined (decodes the %q quoting).
+stub_argv() {
+  local line
+  line=$(stub_call "$1" "$2")
+  eval "set -- $line"
+  printf '%s\n' "$*"
+}
+
+# stub_env NAME N: the DISPLAY/XAUTHORITY line recorded by invocation N of an X client stub.
+stub_env() { sed -n "${2}p" "${STUB_LOG_DIR:?}/$1.env"; }
 
 # refute_secrets: after `run`, neither fixture secret may appear in the output.
 refute_secrets() {

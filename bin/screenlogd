@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# screenlogd - screenlog sampler daemon (spec section 5.1).
+# Phase 2 scope: `screenlogd --once` takes one sample. The loop and announcement arrive in phase 5.
+set -uo pipefail
+export LC_ALL=C.UTF-8
+umask 077
+SCREENLOG_HOME=$(cd -- "$(dirname -- "$(readlink -f -- "$0")")/.." && pwd) || exit 1
+readonly SCREENLOG_HOME
+# shellcheck source=lib/log.sh
+. "$SCREENLOG_HOME/lib/log.sh"
+# shellcheck source=lib/config.sh
+. "$SCREENLOG_HOME/lib/config.sh"
+# shellcheck source=lib/time.sh
+. "$SCREENLOG_HOME/lib/time.sh"
+# shellcheck source=lib/gap.sh
+. "$SCREENLOG_HOME/lib/gap.sh"
+# shellcheck source=lib/session.sh
+. "$SCREENLOG_HOME/lib/session.sh"
+# shellcheck source=lib/capture.sh
+. "$SCREENLOG_HOME/lib/capture.sh"
+# shellcheck source=lib/sample.sh
+. "$SCREENLOG_HOME/lib/sample.sh"
+
+# shellcheck disable=SC2034  # used by the announcement (phase 5)
+SCREENLOG_VERSION=$(<"$SCREENLOG_HOME/VERSION")
+
+# daemon_sample: one sample inside the capture window, recorded and logged. Never fails.
+daemon_sample() {
+  sample_take
+  sample_record || log_error "cannot write $(csv_path "$SAMPLE_DAY")"
+  log_info "$(sample_log_line)"
+}
+
+daemon_once() {
+  if ! time_in_window "$CAPTURE_START" "$CAPTURE_END"; then
+    log_info "outside capture hours ($CAPTURE_START-$CAPTURE_END); nothing to do"
+    return 0
+  fi
+  daemon_sample
+}
+
+main() {
+  local mode=${1:-loop}
+  case $mode in
+    --once) ;;
+    *) die "$EXIT_USAGE" "usage: screenlogd [--once]" ;;
+  esac
+  config_load
+  tmp_init
+  mkdir -p -- "$STATE_DIR" || die "$EXIT_RUNTIME" "cannot create $STATE_DIR"
+  trap stop_children TERM INT
+  case $mode in
+    --once) daemon_once; exit 0 ;;
+  esac
+}
+
+main "$@"

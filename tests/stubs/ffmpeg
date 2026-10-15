@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# stub: ffmpeg. Writes a real JPEG (via ImageMagick) to the last argument. STUB_FFMPEG_EXIT=1
+# fails like a closed display; STUB_FFMPEG_EMPTY=1 writes nothing; STUB_FFMPEG_SLEEP=N delays;
+# STUB_FFMPEG_SIZE=WxH sets the image size.
+set -euo pipefail
+{ printf '%q ' "$0" "$@"; printf '\n'; } >>"${STUB_LOG_DIR:?}/ffmpeg.log"
+printf 'DISPLAY=%s XAUTHORITY=%s\n' "${DISPLAY-<unset>}" "${XAUTHORITY-<unset>}" >>"${STUB_LOG_DIR:?}/ffmpeg.env"
+if [[ -n ${STUB_FFMPEG_SLEEP:-} ]]; then sleep "$STUB_FFMPEG_SLEEP"; fi
+if [[ ${STUB_FFMPEG_EXIT:-0} != 0 ]]; then
+  echo "[x11grab @ 0x5555] Cannot open display ${DISPLAY:-:0}, error 1." >&2
+  exit "$STUB_FFMPEG_EXIT"
+fi
+out=${*: -1}
+if [[ ${STUB_FFMPEG_EMPTY:-0} != 0 ]]; then exit 0; fi
+convert -size "${STUB_FFMPEG_SIZE:-64x48}" xc:'#336699' -quality 85 "jpeg:$out"

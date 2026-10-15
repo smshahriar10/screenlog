@@ -40,7 +40,7 @@ gap_draw() {
 # gap_next: one gap for the daemon loop; falls back to MIN_GAP_SECONDS if awk ever fails.
 gap_next() {
   local g
-  g=$(gap_draw 1 2>/dev/null)
+  g=$(gap_draw 1 2>/dev/null) || g=""
   if [[ ! $g =~ ^[0-9]+$ ]]; then
     g=$MIN_GAP_SECONDS
   fi
