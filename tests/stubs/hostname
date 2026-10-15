@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# stub: hostname
+set -euo pipefail
+{ printf '%q ' "$0" "$@"; printf '\n'; } >>"${STUB_LOG_DIR:?}/hostname.log"
+printf '%s\n' "${STUB_HOSTNAME:-dev-pc-03}"

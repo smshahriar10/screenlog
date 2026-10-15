@@ -1,0 +1,2 @@
+# $output, $status, $lines, $stderr are set by bats' `run`
+disable=SC2154

@@ -1,0 +1,38 @@
+# screenlog configuration - /etc/screenlog/screenlog.conf
+#
+# One KEY="value" per line. Lines starting with # are comments. Only the keys listed here are
+# accepted; the file is parsed, never executed. After editing on a PC run:
+#     sudo screenlog apply-config
+# Shared keys are copied from the bundle's config/screenlog.conf by install.sh on every install
+# or upgrade, so make a permanent change in the bundle as well.
+
+# --- per PC (set by install.sh --name / --slug; keep them out of the bundle config) ---
+# EMPLOYEE_NAME="Rahim Uddin"        # shown in reports
+# EMPLOYEE_SLUG="rahim-uddin"        # Drive folder name; derived from the name unless --slug is given
+
+# --- secrets / destinations ---
+DISCORD_WEBHOOK_URL=""               # https://discord.com/api/webhooks/<id>/<token> (paste from Discord)
+RCLONE_REMOTE="screenlog-gdrive"     # remote name inside /etc/screenlog/rclone.conf
+DRIVE_ROOT="Screenlog"               # top-level folder in the dedicated Drive, shared with the owner
+
+# --- sampling ---
+SHOTS_PER_HOUR=7                     # average; gaps are random (exponential, clamped to the range below)
+MIN_GAP_SECONDS=60                   # shortest gap between two samples
+MAX_GAP_SECONDS=1800                 # longest gap between two samples
+CAPTURE_START="09:00"                # local time, 24h; the first minute that is captured
+CAPTURE_END="17:50"                  # local time, 24h; capture stops at this minute (exclusive)
+IDLE_THRESHOLD_SECONDS=300           # a shot counts as "active" if idle < this
+
+# --- images ---
+JPEG_QUALITY=85                      # 1-100; mapped to ffmpeg's quality scale (approximate)
+MAX_HEIGHT=1080                      # downscale only when the screen is taller than this
+
+# --- reporting ---
+REPORT_TIME="17:30"                  # daily report time (local); the timer also retries hourly
+WORK_DAYS="Sun Mon Tue Wed Thu"      # days on which "no screenshots today" is reported
+GAP_ALERT_MINUTES=45                 # gaps longer than this are listed; must be > MAX_GAP_SECONDS/60
+
+# --- storage ---
+LOCAL_RETENTION_DAYS=7               # local copies deleted after this, only once uploaded and reported
+REMOTE_RETENTION_DAYS=60             # files older than this go to the Drive trash; 0 = keep forever
+UPLOAD_BWLIMIT="1M"                  # passed to rclone --bwlimit (e.g. 1M, 500k, off)

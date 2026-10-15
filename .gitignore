@@ -1,0 +1,5 @@
+config/screenlog.conf
+config/rclone.conf
+vendor/
+dist/
+.DS_Store
