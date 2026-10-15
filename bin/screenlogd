@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # screenlogd - screenlog sampler daemon (spec section 5.1).
-# Phase 2 scope: `screenlogd --once` takes one sample. The loop and announcement arrive in phase 5.
+#   screenlogd            the service: first-run announcement, then the sampling loop forever
+#   screenlogd --once     one sample now (best-effort upload), exit 0
+#   screenlogd --announce the first-run announcement only
 set -uo pipefail
 export LC_ALL=C.UTF-8
 umask 077
@@ -26,8 +28,9 @@ readonly SCREENLOG_HOME
 . "$SCREENLOG_HOME/lib/upload.sh"
 # shellcheck source=lib/retention.sh
 . "$SCREENLOG_HOME/lib/retention.sh"
+# shellcheck source=lib/discord.sh
+. "$SCREENLOG_HOME/lib/discord.sh"
 
-# shellcheck disable=SC2034  # used by the announcement (phase 5)
 SCREENLOG_VERSION=$(<"$SCREENLOG_HOME/VERSION")
 
 # daemon_sample: one sample inside the capture window, recorded, uploaded (best effort, one
@@ -56,20 +59,93 @@ daemon_once() {
   daemon_sample
 }
 
+# daemon_announce BOUND_SECONDS: the first-run announcement (spec 5.1.2). Polls for a capturable
+# session every SCREENLOG_ANNOUNCE_INTERVAL seconds, takes one shot (reused for up to 10 minutes
+# of retries), uploads it and posts the message once; the flag is created only after a 2xx.
+# Returns 0 when posted, 1 when the bound ran out, the webhook is rejected or a stop came.
+daemon_announce() {
+  local bound=${1:-900} shot_epoch=0 img="$SCREENLOG_TMP/announce.jpg" interval deadline posted=0
+  interval=$(awk -v i="${SCREENLOG_ANNOUNCE_INTERVAL:-30}" 'BEGIN { if (i + 0 < 0.2) i = 0.2; print i + 0 }')
+  deadline=$(( EPOCHSECONDS + bound ))
+  while (( RUN_STOP == 0 )); do
+    if (( EPOCHSECONDS - shot_epoch > 600 )); then
+      sample_take
+      if [[ $SAMPLE_STATUS == shot ]]; then
+        if time_in_window "$CAPTURE_START" "$CAPTURE_END"; then
+          sample_record || log_error "cannot write $(csv_path "$SAMPLE_DAY")"
+        fi
+        upload_day "$SAMPLE_DAY" quick || log_warn "announce: upload failed ($(log_redact_str "$UPLOAD_ERROR"))"
+        if discord_prepare_image "$SHOTS_DIR/$SAMPLE_DAY/$SAMPLE_FILE" "$img"; then
+          shot_epoch=$EPOCHSECONDS
+        else
+          log_warn "announce: cannot prepare the image"
+        fi
+      else
+        log_info "announce: waiting for a capturable session (status=$SAMPLE_STATUS${SAMPLE_DETAIL:+: $SAMPLE_DETAIL})"
+      fi
+    fi
+    if (( shot_epoch > 0 )); then
+      if SCREENLOG_DISCORD_BACKOFF="" discord_post "✅ Screenlog is running on ${EMPLOYEE_NAME}'s PC ($(hostname), v$SCREENLOG_VERSION)" "$img"; then
+        touch "$STATE_DIR/setup-announced"
+        log_info "announce: posted (HTTP $DISCORD_LAST_HTTP)"
+        posted=1
+        break
+      fi
+      case $DISCORD_LAST_KIND in
+        http|dead)
+          log_error "announce: webhook rejected ($DISCORD_LAST_ERROR); fix DISCORD_WEBHOOK_URL, then: screenlog apply-config"
+          return 1 ;;
+        *) log_warn "announce: post failed ($DISCORD_LAST_ERROR)" ;;
+      esac
+    fi
+    if (( EPOCHSECONDS >= deadline )); then
+      log_warn "announce: not posted yet; sampling starts, the announcement is retried hourly"
+      return 1
+    fi
+    sleep_interruptible "$interval" || return 1
+  done
+  (( posted ))
+}
+
+# daemon_loop: forever - random gap, skip silently outside the window, else one sample. While the
+# first-run flag is absent, the announcement is retried at most hourly from here.
+daemon_loop() {
+  local gap next_announce=0
+  while (( RUN_STOP == 0 )); do
+    gap=$(gap_next)
+    sleep_interruptible "$gap" || break
+    if [[ ! -f $STATE_DIR/setup-announced && -z ${SCREENLOG_SKIP_ANNOUNCE:-} ]] && (( EPOCHSECONDS >= next_announce )); then
+      next_announce=$(( EPOCHSECONDS + 3600 ))
+      daemon_announce 0 || true
+      (( RUN_STOP == 0 )) || break
+    fi
+    time_in_window "$CAPTURE_START" "$CAPTURE_END" || continue
+    daemon_sample
+  done
+  log_info "screenlogd stopping"
+}
+
 main() {
   local mode=${1:-loop}
   case $mode in
-    --once) ;;
-    *) die "$EXIT_USAGE" "usage: screenlogd [--once]" ;;
+    loop|--once|--announce) ;;
+    *) die "$EXIT_USAGE" "usage: screenlogd [--once|--announce]" ;;
   esac
   config_load
   tmp_init
-  mkdir -p -- "$STATE_DIR" || die "$EXIT_RUNTIME" "cannot create $STATE_DIR"
+  mkdir -p -- "$STATE_DIR" "$WORK_TMP_DIR" || die "$EXIT_RUNTIME" "cannot create $STATE_DIR"
   SCREENLOG_LOCK_WAIT=${SCREENLOG_LOCK_WAIT:-5}   # a quick upload must not stall sampling
   trap stop_children TERM INT
   case $mode in
     --once) daemon_once; exit 0 ;;
+    --announce) daemon_announce "${SCREENLOG_ANNOUNCE_BOUND:-900}"; exit ;;
   esac
+  log_info "screenlogd v$SCREENLOG_VERSION starting (window $CAPTURE_START-$CAPTURE_END, ~$SHOTS_PER_HOUR shots/h)"
+  if [[ ! -f $STATE_DIR/setup-announced && -z ${SCREENLOG_SKIP_ANNOUNCE:-} ]]; then
+    daemon_announce "${SCREENLOG_ANNOUNCE_BOUND:-900}" || true
+  fi
+  daemon_loop
+  exit 0
 }
 
 main "$@"

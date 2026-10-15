@@ -43,6 +43,10 @@ source "$REPO_ROOT/lib/discord.sh"
 source "$REPO_ROOT/lib/sheet.sh"
 # shellcheck source=lib/report.sh
 source "$REPO_ROOT/lib/report.sh"
+# shellcheck source=lib/units.sh
+source "$REPO_ROOT/lib/units.sh"
+# shellcheck source=lib/system.sh
+source "$REPO_ROOT/lib/system.sh"
 SCREENLOG_VERSION=$(<"$REPO_ROOT/VERSION")
 
 # screenlog_test_setup: the base dir is BATS_TEST_TMPDIR (per test). From setup_file, where bats
@@ -88,7 +92,7 @@ set_config() {
       index($0, k "=") == 1 { print line; done = 1; next }
       { print }
       END { if (!done) print line }' "${SCREENLOG_CONFIG:?}" > "$SCREENLOG_CONFIG.new" \
-      && mv "$SCREENLOG_CONFIG.new" "$SCREENLOG_CONFIG"
+      && chmod 600 "$SCREENLOG_CONFIG.new" && mv "$SCREENLOG_CONFIG.new" "$SCREENLOG_CONFIG"
     shift 2
   done
 }
@@ -98,7 +102,7 @@ unset_config() {
   local key
   for key in "$@"; do
     k="$key" awk 'index($0, ENVIRON["k"] "=") != 1' "${SCREENLOG_CONFIG:?}" > "$SCREENLOG_CONFIG.new" \
-      && mv "$SCREENLOG_CONFIG.new" "$SCREENLOG_CONFIG"
+      && chmod 600 "$SCREENLOG_CONFIG.new" && mv "$SCREENLOG_CONFIG.new" "$SCREENLOG_CONFIG"
   done
 }
 

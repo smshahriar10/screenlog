@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# stub: timedatectl show -p Timezone -p NTPSynchronized --value
+set -euo pipefail
+{ printf '%q ' "$0" "$@"; printf '\n'; } >>"${STUB_LOG_DIR:?}/timedatectl.log"
+while (($#)); do
+  case $1 in
+    -p|--property)
+      case $2 in
+        Timezone) printf '%s\n' "${STUB_TZ:-Asia/Dhaka}" ;;
+        NTPSynchronized) printf '%s\n' "${STUB_NTP:-yes}" ;;
+        *) printf '\n' ;;
+      esac
+      shift 2 ;;
+    *) shift ;;
+  esac
+done

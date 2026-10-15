@@ -67,7 +67,8 @@ discord_wait() {
 
 # discord_post CONTENT [IMAGE]: multipart POST with retries. 2xx -> 0. 429 -> wait retry_after
 # (at most 5 times). Other 4xx -> permanent failure (404 marks the webhook dead for this process).
-# Network errors and 5xx -> backoff SCREENLOG_DISCORD_BACKOFF ("60 240 600": 4 attempts, ~15 min).
+# Network errors and 5xx -> backoff SCREENLOG_DISCORD_BACKOFF ("60 240 600": 4 attempts, ~15 min;
+# an empty value means a single attempt, which the announcement loop uses).
 discord_post() {
   local content=$1 image=${2:-} payload body attempt=0 rc code wait_s rate_waits=0 max_attempts
   local -a backoff form
@@ -77,7 +78,7 @@ discord_post() {
     DISCORD_LAST_ERROR="webhook rejected earlier in this run (HTTP 404)"
     return 1
   fi
-  read -r -a backoff <<< "${SCREENLOG_DISCORD_BACKOFF:-60 240 600}"
+  read -r -a backoff <<< "${SCREENLOG_DISCORD_BACKOFF-60 240 600}"
   max_attempts=$(( ${#backoff[@]} + 1 ))
   payload="$SCREENLOG_TMP/payload.json"
   body="$SCREENLOG_TMP/curl.body"

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# stub: systemctl. STUB_SYSTEMCTL_ACTIVE / STUB_SYSTEMCTL_ENABLED (default active/enabled) answer
+# is-active / is-enabled for every unit; STUB_SYSTEMCTL_FAILED=unit makes is-failed say failed.
+set -euo pipefail
+{ printf '%q ' "$0" "$@"; printf '\n'; } >>"${STUB_LOG_DIR:?}/systemctl.log"
+cmd=${1:-}
+case $cmd in
+  is-active)
+    printf '%s\n' "${STUB_SYSTEMCTL_ACTIVE:-active}"
+    [[ ${STUB_SYSTEMCTL_ACTIVE:-active} == active ]] || exit 3 ;;
+  is-enabled)
+    printf '%s\n' "${STUB_SYSTEMCTL_ENABLED:-enabled}"
+    [[ ${STUB_SYSTEMCTL_ENABLED:-enabled} == enabled ]] || exit 1 ;;
+  is-failed)
+    if [[ ${STUB_SYSTEMCTL_FAILED:-} == "${2:-}" ]]; then echo failed; exit 0; fi
+    echo inactive; exit 1 ;;
+  list-timers)
+    printf 'Thu 2026-10-15 17:30:00 +06 7h left Thu 2026-10-15 10:00:12 +06 2min ago screenlog-report.timer screenlog-report.service\n' ;;
+  show)
+    while (($#)); do
+      case $1 in
+        -p|--property) printf '%s\n' "${STUB_SYSTEMCTL_PROP:-[not set]}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done ;;
+  daemon-reload|enable|disable|restart|start|stop|reset-failed|reboot) ;;
+  *) echo "stub systemctl: unsupported: $cmd" >&2; exit 1 ;;
+esac
+exit 0

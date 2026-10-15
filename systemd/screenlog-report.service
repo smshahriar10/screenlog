@@ -1,0 +1,20 @@
+[Unit]
+Description=Screenlog daily report
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/screenlog/bin/screenlog report --pending
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=50%
+MemoryMax=400M
+TimeoutStartSec=30min
+NoNewPrivileges=yes
+ProtectSystem=full
+ReadWritePaths=/etc/screenlog /var/lib/screenlog
+# ImageMagick's default policy allows 1 GiB of RAM, above MemoryMax; keep it well below and
+# single-threaded, with its temp files under the data dir.
+Environment=HOME=/root LANG=C.UTF-8 MAGICK_THREAD_LIMIT=1 MAGICK_MEMORY_LIMIT=192MiB MAGICK_MAP_LIMIT=384MiB MAGICK_DISK_LIMIT=1GiB MAGICK_TEMPORARY_PATH=/var/lib/screenlog/tmp
+TimeoutStopSec=60

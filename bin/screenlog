@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # screenlog - the operator CLI (spec section 7).
-# Phase 4 scope: report, version, help. The other commands arrive in phase 5.
 set -uo pipefail
 export LC_ALL=C.UTF-8
 umask 077
@@ -34,6 +33,10 @@ readonly SCREENLOG_HOME
 . "$SCREENLOG_HOME/lib/sheet.sh"
 # shellcheck source=lib/report.sh
 . "$SCREENLOG_HOME/lib/report.sh"
+# shellcheck source=lib/units.sh
+. "$SCREENLOG_HOME/lib/units.sh"
+# shellcheck source=lib/system.sh
+. "$SCREENLOG_HOME/lib/system.sh"
 
 SCREENLOG_VERSION=$(<"$SCREENLOG_HOME/VERSION")
 
@@ -44,12 +47,23 @@ screenlog $SCREENLOG_VERSION - screenshot sampler for Ubuntu 24.04 desktops
 Usage: screenlog <command> [options]
 
 Commands (all but version and help need root: sudo screenlog <command>)
+  status         Service and timer state, next report, last sample, today's counts, pending
+                 uploads and reports, session type, version. Prints no secrets.
+  test           Take a shot now, upload it, post "🧪 Test from <name>" with the image.
   report [--date YYYY-MM-DD] [--pending] [--dry-run]
                  Build and post daily reports. --pending (the default) posts every due day that
                  is not reported yet; --date posts one day; --dry-run writes the message JSON and
                  the contact sheet to a temp dir, prints the paths and makes no network calls.
+  upload         Upload all local days now.
+  doctor         PASS / WARN / FAIL checks: OS, Xorg forced, session type, upgrade prompt,
+                 packages, config, Drive, webhook, units, disk, time zone, last sample age.
+  apply-config   Re-validate $SCREENLOG_CONFIG, re-render the timer
+                 from REPORT_TIME and restart the services. Run it after editing the config.
+  logs [args]    journalctl -u screenlog -u screenlog-report -n 200 --no-pager [args]
   version        Print the version.
   help           This text.
+
+Config: $SCREENLOG_CONFIG (edit it, then: sudo screenlog apply-config)
 
 Exit codes: 0 ok, 1 runtime failure, 2 usage, 3 config invalid, 4 root required,
             5 another run holds the lock, 6 missing dependency, 7 remote check failed,
@@ -96,22 +110,292 @@ cli_report() {
   report_pending "$dry"
 }
 
+# ---- status -------------------------------------------------------------------------------
+
+cli_status() {
+  local today csv line sess="none" n
+  today=$(time_day)
+  printf '%-17s %s\n' "version:" "$SCREENLOG_VERSION ($(hostname))"
+  if (( CONFIG_OK )); then
+    printf '%-17s %s\n' "employee:" "$EMPLOYEE_NAME ($EMPLOYEE_SLUG)"
+  fi
+  printf '%-17s %s (%s)\n' "service:" "$(systemctl is-active screenlog.service 2>/dev/null || true)" "$(systemctl is-enabled screenlog.service 2>/dev/null || true)"
+  printf '%-17s %s (%s), next: %s\n' "report timer:" "$(systemctl is-active screenlog-report.timer 2>/dev/null || true)" "$(systemctl is-enabled screenlog-report.timer 2>/dev/null || true)" "$(units_next_report)"
+  if [[ -n ${SCREENLOG_DISPLAY:-} ]]; then
+    sess="override (SCREENLOG_DISPLAY=$SCREENLOG_DISPLAY)"
+  elif session_find; then
+    sess="x11 ($SESSION_USER, session $SESSION_ID)"
+  elif [[ $SESSION_STATUS == unsupported_session ]]; then
+    sess="$SESSION_TYPE (unsupported: X11 only; reboot after install, or pick 'Ubuntu on Xorg' at login)"
+  fi
+  printf '%-17s %s\n' "session:" "$sess"
+  if (( CONFIG_OK )); then
+    printf '%-17s %s-%s, ~%s shots/h, report %s on %s\n' "capture window:" "$CAPTURE_START" "$CAPTURE_END" "$SHOTS_PER_HOUR" "$REPORT_TIME" "${WORK_DAYS:-no days}"
+    csv=$(csv_path "$today")
+    if report_csv_has_samples "$csv"; then
+      report_load_stats "$csv"
+      printf '%-17s %s samples: %s shots (%s active, %s%%), locked %s, no session %s, unsupported %s, errors %s\n' "today:" \
+        "${REPORT_STATS[samples]}" "${REPORT_STATS[shots]}" "${REPORT_STATS[active]}" "${REPORT_STATS[active_pct]}" \
+        "${REPORT_STATS[locked]}" "${REPORT_STATS[no_session]}" "${REPORT_STATS[unsupported_session]}" "${REPORT_STATS[error]}"
+      line=$(tail -n1 "$csv")
+      printf '%-17s %s\n' "last sample:" "$(awk -F, '{ s = $1 " " $2; if ($3 != "") s = s " idle " $3 "s"; if ($5 != "") s = s " (" $5 ")"; print s }' <<< "$line")"
+    else
+      printf '%-17s %s\n' "today:" "no samples yet"
+      printf '%-17s %s\n' "last sample:" "none today"
+    fi
+    n=$(upload_pending | grep -c '' || true)
+    if (( n > 0 )); then
+      printf '%-17s %s day(s): %s\n' "pending uploads:" "$n" "$(upload_pending | paste -sd ' ')"
+    else
+      printf '%-17s none\n' "pending uploads:"
+    fi
+    n=$(report_due_days | grep -c '' || true)
+    if (( n > 0 )); then
+      printf '%-17s %s day(s): %s\n' "pending reports:" "$n" "$(report_due_days | paste -sd ' ')"
+    else
+      printf '%-17s none\n' "pending reports:"
+    fi
+    printf '%-17s shots %s, free %s MB\n' "disk:" "$(du -sh "$SHOTS_DIR" 2>/dev/null | cut -f1 || echo 0)" "$(disk_free_mb "$SCREENLOG_DATA_DIR")"
+    printf '%-17s %s valid\n' "config:" "$SCREENLOG_CONFIG"
+  else
+    printf '%-17s %s INVALID (see the config: lines above; fix it, then: sudo screenlog apply-config)\n' "config:" "$SCREENLOG_CONFIG"
+  fi
+  config_print_public | sed 's/^/  /'
+}
+
+# ---- doctor -------------------------------------------------------------------------------
+
+DOCTOR_FAILS=0
+DOCTOR_WARNS=0
+
+doctor_line() {   # doctor_line PASS|WARN|FAIL NAME DETAIL
+  case $1 in
+    FAIL) DOCTOR_FAILS=$((DOCTOR_FAILS + 1)) ;;
+    WARN) DOCTOR_WARNS=$((DOCTOR_WARNS + 1)) ;;
+  esac
+  printf '%s %s: %s\n' "$1" "$2" "$3"
+}
+
+cli_doctor() {
+  local v arch missing=() p tool tools_missing=() age ts now csv line mode owner free
+  # 1. OS
+  if [[ $(os_field ID) == ubuntu && $(os_field VERSION_ID) == 24.04 ]]; then
+    doctor_line PASS os "$(os_field PRETTY_NAME)"
+  else
+    doctor_line FAIL os "$(os_field PRETTY_NAME) (only Ubuntu 24.04 is supported)"
+  fi
+  arch=$(system_arch)
+  if [[ $arch == amd64 ]]; then doctor_line PASS arch "$arch"; else doctor_line WARN arch "$arch (the supported PCs are amd64)"; fi
+  # 2. Xorg forced
+  v=$(ini_get_key "$PATH_GDM_CONF" daemon WaylandEnable) || v=""
+  if [[ $v == false ]]; then doctor_line PASS wayland "WaylandEnable=false in $PATH_GDM_CONF"
+  else doctor_line FAIL wayland "WaylandEnable=false is not set in $PATH_GDM_CONF (re-run install.sh)"; fi
+  # 3. session
+  if [[ -n ${SCREENLOG_DISPLAY:-} ]]; then
+    doctor_line PASS session "override (SCREENLOG_DISPLAY=$SCREENLOG_DISPLAY)"
+  elif session_find; then
+    doctor_line PASS session "x11 ($SESSION_USER, session $SESSION_ID)"
+  elif [[ $SESSION_STATUS == unsupported_session ]]; then
+    doctor_line FAIL session "$SESSION_TYPE session (X11 only: reboot after install, or choose 'Ubuntu on Xorg' at login)"
+  else
+    doctor_line WARN session "nobody is logged in on seat0"
+  fi
+  # 4. release upgrades
+  v=$(ini_get_key "$PATH_RELEASE_UPGRADES" DEFAULT Prompt) || v=""
+  if [[ $v == never ]]; then doctor_line PASS upgrades "Prompt=never in $PATH_RELEASE_UPGRADES"
+  else doctor_line FAIL upgrades "Prompt=never is not set in $PATH_RELEASE_UPGRADES (re-run install.sh)"; fi
+  # 5. packages and tools
+  for p in ffmpeg xprintidle imagemagick curl x11-utils fonts-dejavu-core jq libglib2.0-bin; do
+    pkg_installed "$p" || missing+=("$p")
+  done
+  for tool in ffmpeg xprintidle convert montage identify curl xdpyinfo rclone jq gdbus flock timeout runuser; do
+    command -v "$tool" >/dev/null 2>&1 || tools_missing+=("$tool")
+  done
+  if (( ${#missing[@]} == 0 && ${#tools_missing[@]} == 0 )) && [[ -r $PATH_FONT ]]; then
+    doctor_line PASS packages "all present"
+  else
+    doctor_line FAIL packages "missing: ${missing[*]} ${tools_missing[*]} $( [[ -r $PATH_FONT ]] || echo "$PATH_FONT" ) (re-run install.sh)"
+  fi
+  v=$(rclone_version)
+  if [[ -n $v ]] && version_ge "$v" 1.60.0; then doctor_line PASS rclone "version $v"
+  else doctor_line FAIL rclone "version ${v:-unknown}; 1.60 or newer is required"; fi
+  # 6. config
+  if (( CONFIG_OK )); then
+    doctor_line PASS config "$SCREENLOG_CONFIG valid"
+  else
+    doctor_line FAIL config "$SCREENLOG_CONFIG has $CONFIG_ERROR_COUNT error(s), see above"
+  fi
+  mode=$(stat -c '%U:%G %a' "$SCREENLOG_CONFIG" 2>/dev/null || echo "missing")
+  owner=$(stat -c '%U:%G %a' "$PATH_ETC_DIR" 2>/dev/null || echo "missing")
+  if [[ $mode == "root:root 600" && $owner == "root:root 700" ]]; then doctor_line PASS "config mode" "$PATH_ETC_DIR 700, screenlog.conf 600, root"
+  else doctor_line WARN "config mode" "expected root:root 700 on $PATH_ETC_DIR and 600 on the files (found: dir $owner, conf $mode)"; fi
+  if (( CONFIG_OK )); then
+    if grep -qx "\[$RCLONE_REMOTE\]" "$SCREENLOG_RCLONE_CONF" 2>/dev/null; then
+      if awk -v s="[$RCLONE_REMOTE]" -F' *= *' '$0 == s { f = 1; next } /^\[/ { f = 0 } f && $1 == "client_id" && $2 != "" { ok = 1 } END { exit !ok }' "$SCREENLOG_RCLONE_CONF"; then
+        doctor_line PASS "rclone client_id" "own Google OAuth client configured for [$RCLONE_REMOTE]"
+      else
+        doctor_line WARN "rclone client_id" "[$RCLONE_REMOTE] uses rclone's shared client_id, which Google is retiring in 2026 (see README: own OAuth client)"
+      fi
+    else
+      doctor_line FAIL "rclone remote" "no [$RCLONE_REMOTE] section in $SCREENLOG_RCLONE_CONF"
+    fi
+    # 7. Drive
+    if SCREENLOG_RCLONE_TIMEOUT=45 SCREENLOG_LOCK_WAIT=20 drive_rclone lsd "$(drive_remote_employee)" --contimeout 10s --timeout 30s --retries 1; then
+      doctor_line PASS drive "$(drive_remote_employee) reachable"
+    else
+      doctor_line FAIL drive "$(drive_remote_employee): $DRIVE_LAST_ERR"
+    fi
+    # 8. webhook
+    if discord_validate; then doctor_line PASS webhook "valid (HTTP 200, \"$DISCORD_WEBHOOK_NAME\")"
+    else doctor_line FAIL webhook "$DISCORD_LAST_ERROR"; fi
+  else
+    doctor_line WARN drive "skipped (config invalid)"
+    doctor_line WARN webhook "skipped (config invalid)"
+  fi
+  # 9. units
+  for p in screenlog.service screenlog-report.timer; do
+    if [[ $(systemctl is-enabled "$p" 2>/dev/null) == enabled && $(systemctl is-active "$p" 2>/dev/null) == active ]]; then
+      doctor_line PASS "$p" "enabled and active"
+    else
+      doctor_line FAIL "$p" "$(systemctl is-enabled "$p" 2>/dev/null || true) / $(systemctl is-active "$p" 2>/dev/null || true) (sudo screenlog apply-config)"
+    fi
+  done
+  if systemctl is-failed screenlog-report.service >/dev/null 2>&1; then
+    doctor_line WARN "last report run" "failed (sudo screenlog logs)"
+  fi
+  # 10. disk
+  free=$(disk_free_mb "$SCREENLOG_DATA_DIR")
+  if [[ ! $free =~ ^[0-9]+$ ]]; then doctor_line WARN disk "cannot read free space of $SCREENLOG_DATA_DIR"
+  elif (( free < 500 )); then doctor_line FAIL disk "${free} MB free on $SCREENLOG_DATA_DIR (less than 500 MB)"
+  elif (( free < 2048 )); then doctor_line WARN disk "${free} MB free on $SCREENLOG_DATA_DIR (less than 2 GB)"
+  else doctor_line PASS disk "${free} MB free on $SCREENLOG_DATA_DIR"; fi
+  # 11. time zone
+  v=$(timedatectl show -p Timezone --value 2>/dev/null || true)
+  if [[ $v == "${SCREENLOG_EXPECTED_TZ:-Asia/Dhaka}" ]]; then doctor_line PASS "time zone" "$v"
+  else doctor_line WARN "time zone" "${v:-unknown} (expected ${SCREENLOG_EXPECTED_TZ:-Asia/Dhaka}: sudo timedatectl set-timezone Asia/Dhaka)"; fi
+  v=$(timedatectl show -p NTPSynchronized --value 2>/dev/null || true)
+  [[ $v == yes ]] || doctor_line WARN "clock sync" "NTP not synchronised (timedatectl)"
+  # 12. last sample age
+  if (( CONFIG_OK )); then
+    csv=$(csv_path "$(time_day)")
+    now=$(time_now_epoch)
+    if report_csv_has_samples "$csv"; then
+      line=$(tail -n1 "$csv")
+      ts=$(time_parse "${line%%,*}" 2>/dev/null || echo 0)
+      age=$(( now - ts ))
+      if ! time_in_window "$CAPTURE_START" "$CAPTURE_END"; then
+        doctor_line PASS "last sample" "$((age / 60)) min ago (outside capture hours now)"
+      elif (( age > MAX_GAP_SECONDS + 300 )); then
+        doctor_line FAIL "last sample" "$((age / 60)) min ago, more than MAX_GAP_SECONDS+5min (sudo screenlog logs)"
+      elif (( age > MAX_GAP_SECONDS )); then
+        doctor_line WARN "last sample" "$((age / 60)) min ago, more than MAX_GAP_SECONDS"
+      else
+        doctor_line PASS "last sample" "$((age / 60)) min ago"
+      fi
+    elif time_in_window "$CAPTURE_START" "$CAPTURE_END" && (( $(time_min_of_day) - $(time_hhmm_to_min "$CAPTURE_START") > MAX_GAP_SECONDS / 60 )); then
+      doctor_line WARN "last sample" "no sample yet today although capture hours started (sudo screenlog logs)"
+    else
+      doctor_line PASS "last sample" "no sample yet today"
+    fi
+  fi
+  printf 'doctor: %s warning(s), %s failure(s)\n' "$DOCTOR_WARNS" "$DOCTOR_FAILS"
+  (( DOCTOR_FAILS == 0 ))
+}
+
+# ---- test, upload, apply-config, logs -----------------------------------------------------
+
+cli_test() {
+  local t0 t1 img up="ok" rc=0
+  t0=$EPOCHREALTIME
+  sample_take
+  t1=$EPOCHREALTIME
+  if [[ $SAMPLE_STATUS != shot ]]; then
+    printf 'status: %s%s\n' "$SAMPLE_STATUS" "${SAMPLE_DETAIL:+ ($SAMPLE_DETAIL)}"
+    log_error "test: no shot taken"
+    return 1
+  fi
+  SAMPLE_DETAIL="manual test"
+  sample_record || log_warn "cannot write $(csv_path "$SAMPLE_DAY")"
+  printf 'capture: %s ms, %s (%s bytes), idle %ss\n' "$(awk -v a="$t0" -v b="$t1" 'BEGIN { printf "%d", (b - a) * 1000 }')" \
+    "$SAMPLE_FILE" "$(stat -c %s "$SHOTS_DIR/$SAMPLE_DAY/$SAMPLE_FILE")" "$SAMPLE_IDLE"
+  t0=$EPOCHREALTIME
+  upload_day "$SAMPLE_DAY" || up="failed ($(log_redact_str "$UPLOAD_ERROR"))"
+  t1=$EPOCHREALTIME
+  printf 'upload: %s (%s s)\n' "$up" "$(awk -v a="$t0" -v b="$t1" 'BEGIN { printf "%.1f", b - a }')"
+  img="$SCREENLOG_TMP/test.jpg"
+  discord_prepare_image "$SHOTS_DIR/$SAMPLE_DAY/$SAMPLE_FILE" "$img" || die "$EXIT_RUNTIME" "cannot prepare the image"
+  if discord_post "🧪 Test from $EMPLOYEE_NAME" "$img"; then
+    printf 'discord: HTTP %s\n' "$DISCORD_LAST_HTTP"
+  else
+    printf 'discord: failed (%s)\n' "$DISCORD_LAST_ERROR"
+    rc=1
+  fi
+  printf 'hint: sudo /usr/bin/time -v screenlog test  shows wall time, CPU and peak memory\n'
+  return "$rc"
+}
+
+cli_upload() {
+  local d failed=0
+  while IFS= read -r d; do
+    [[ -n $d ]] || continue
+    if upload_day "$d"; then
+      printf '%s ok\n' "$d"
+    else
+      printf '%s failed: %s\n' "$d" "$(log_redact_str "$UPLOAD_ERROR")"
+      failed=1
+    fi
+  done < <(upload_pending)
+  (( failed == 0 )) && printf 'all local days are uploaded\n'
+  (( failed == 0 ))
+}
+
+cli_apply_config() {
+  mkdir -p -- "$STATE_DIR" "$WORK_TMP_DIR" "$PATH_UNIT_DIR" || die "$EXIT_SYSTEM" "cannot create directories"
+  units_render "$SCREENLOG_HOME/systemd" "$PATH_UNIT_DIR" "$REPORT_TIME" || die "$EXIT_SYSTEM" "cannot render the units into $PATH_UNIT_DIR"
+  systemctl daemon-reload || die "$EXIT_SYSTEM" "systemctl daemon-reload failed"
+  units_restart || die "$EXIT_SYSTEM" "systemctl restart failed"
+  printf 'config applied: capture %s-%s, ~%s shots/h, report %s on %s\n' "$CAPTURE_START" "$CAPTURE_END" "$SHOTS_PER_HOUR" "$REPORT_TIME" "${WORK_DAYS:-no days}"
+  printf 'next report: %s\n' "$(units_next_report)"
+  printf 'note: shared keys (hours, report time, work days, quality, retention) are rewritten from the\n'
+  printf '      bundle on the next install.sh; change the bundle config too to make this permanent.\n'
+}
+
+cli_logs() {
+  journalctl -u screenlog -u screenlog-report -n 200 --no-pager "$@"
+}
+
 main() {
   local cmd=${1:-help}
   shift || true
   case $cmd in
     version) printf '%s\n' "$SCREENLOG_VERSION"; exit 0 ;;
     help|-h|--help) cli_help; exit 0 ;;
-    report) ;;
+    status|test|report|upload|doctor|apply-config|logs) ;;
     *) usage_error "unknown command: $cmd" ;;
   esac
   require_root "$cmd"
-  config_load
+  CONFIG_OK=1
+  CONFIG_ERROR_COUNT=0
+  case $cmd in
+    status|doctor)
+      paths_init
+      if ! config_check "$SCREENLOG_CONFIG"; then
+        CONFIG_OK=0
+        CONFIG_ERROR_COUNT=${#CONFIG_ERRORS[@]}
+      fi ;;
+    *) config_load ;;
+  esac
   tmp_init
   SCREENLOG_LOCK_WAIT=${SCREENLOG_LOCK_WAIT:-900}
   trap cli_on_signal INT TERM
   case $cmd in
+    status) cli_status ;;
+    test) cli_test ;;
     report) cli_report "$@" ;;
+    upload) cli_upload ;;
+    doctor) cli_doctor ;;
+    apply-config) cli_apply_config ;;
+    logs) cli_logs "$@" ;;
   esac
 }
 

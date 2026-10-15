@@ -1,0 +1,25 @@
+[Unit]
+Description=Screenlog screenshot sampler
+After=systemd-logind.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/screenlog/bin/screenlogd
+Restart=always
+RestartSec=30
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=10%
+MemoryHigh=200M
+MemoryMax=256M
+NoNewPrivileges=yes
+ProtectSystem=full
+ReadWritePaths=/etc/screenlog /var/lib/screenlog
+# Root services start without HOME (rclone would use a tmp cache dir); one ImageMagick thread
+# for the 960 px Discord copies so OpenMP workers do not spin inside the CPU quota.
+Environment=HOME=/root LANG=C.UTF-8 MAGICK_THREAD_LIMIT=1
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# stub: journalctl
+set -euo pipefail
+{ printf '%q ' "$0" "$@"; printf '\n'; } >>"${STUB_LOG_DIR:?}/journalctl.log"
+printf 'Oct 15 10:00:12 dev-pc-03 screenlogd[1234]: INFO: screenlogd v1.0.0 starting\nOct 15 10:09:41 dev-pc-03 screenlogd[1234]: INFO: sample day=2026-10-15 status=shot idle=3 file=10-09-41.jpg upload=ok\nOct 15 10:00:14 dev-pc-03 screenlog[1300]: INFO: report: nothing to do\n'
