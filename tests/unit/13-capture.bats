@@ -8,7 +8,7 @@ setup() {
   # not tmp_init: its EXIT trap would replace bats' own reporting trap in the test process
   SCREENLOG_TMP="$BATS_TEST_TMPDIR/screenlog-tmp"
   mkdir -p "$SCREENLOG_TMP"
-  use_stubs loginctl runuser gdbus xprintidle ffmpeg hostname
+  use_stubs loginctl runuser gdbus xprintidle ffmpeg hostname rclone
   export SCREENLOG_DISPLAY=:1
   SESSION_DISPLAY=:1
   SESSION_XAUTHORITY=""
@@ -158,7 +158,7 @@ setup() {
 @test "screenlogd --once: a shot inside the window writes the JPEG, the CSV row and one log line" {
   run screenlogd --once
   assert_success
-  assert_line --index 0 "INFO: sample day=2026-10-15 status=shot idle=1 file=10-00-00.jpg"
+  assert_line --index 0 "INFO: sample day=2026-10-15 status=shot idle=1 file=10-00-00.jpg upload=ok"
   assert_file_exists "$SCREENLOG_DATA_DIR/shots/2026-10-15/10-00-00.jpg"
   run tail -n1 "$SCREENLOG_DATA_DIR/shots/2026-10-15/samples.csv"
   assert_output "2026-10-15T10:00:00+06:00,shot,1,10-00-00.jpg,"

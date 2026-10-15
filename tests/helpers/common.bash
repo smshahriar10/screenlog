@@ -31,6 +31,12 @@ source "$REPO_ROOT/lib/session.sh"
 source "$REPO_ROOT/lib/capture.sh"
 # shellcheck source=lib/sample.sh
 source "$REPO_ROOT/lib/sample.sh"
+# shellcheck source=lib/drive.sh
+source "$REPO_ROOT/lib/drive.sh"
+# shellcheck source=lib/upload.sh
+source "$REPO_ROOT/lib/upload.sh"
+# shellcheck source=lib/retention.sh
+source "$REPO_ROOT/lib/retention.sh"
 
 # screenlog_test_setup: the base dir is BATS_TEST_TMPDIR (per test). From setup_file, where bats
 # 1.10 does not set BATS_TEST_TMPDIR, export SCREENLOG_TEST_BASE_DIR="$BATS_FILE_TMPDIR/filesetup" first.

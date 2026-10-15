@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# stub: rclone with a fake remote under $STUB_REMOTE_DIR ("remote:a/b" -> "$STUB_REMOTE_DIR/a/b").
+# Knobs: STUB_RCLONE_FAIL=copy|lsjson|lsd|mkdir|delete|rmdirs|all (that subcommand fails like a
+# network error), STUB_RCLONE_SLEEP=N, STUB_RCLONE_VERSION=vX.Y.Z, STUB_RCLONE_STDERR=text
+# (printed on stderr before exiting; for redaction tests).
+set -euo pipefail
+{ printf '%q ' "$0" "$@"; printf '\n'; } >>"${STUB_LOG_DIR:?}/rclone.log"
+if [[ -n ${STUB_RCLONE_SLEEP:-} ]]; then sleep "$STUB_RCLONE_SLEEP"; fi
+cmd=""; args=(); min_age=""; dirs_only=0; exclude_dot=0
+while (($#)); do
+  case $1 in
+    --config|--bwlimit|--timeout|--contimeout|--retries|--low-level-retries|--stats|--transfers|--checkers|--log-level|--retries-sleep)
+      shift 2 ;;
+    --min-age) min_age=$2; shift 2 ;;
+    --exclude) [[ $2 == '.*' ]] && exclude_dot=1; shift 2 ;;
+    --dirs-only) dirs_only=1; shift ;;
+    --leave-root|--no-mimetype|--no-modtime|-q|-v|--no-traverse) shift ;;
+    --*) shift ;;
+    *) if [[ -z $cmd ]]; then cmd=$1; else args+=("$1"); fi; shift ;;
+  esac
+done
+remote_path() { local p=${1#*:}; printf '%s/%s\n' "${STUB_REMOTE_DIR:?}" "$p"; }
+if [[ -n ${STUB_RCLONE_STDERR:-} ]]; then printf '%s\n' "$STUB_RCLONE_STDERR" >&2; fi
+if [[ ${STUB_RCLONE_FAIL:-} == all || ${STUB_RCLONE_FAIL:-} == "$cmd" ]]; then
+  printf 'Failed to %s: couldn'"'"'t connect (stub)\n' "$cmd" >&2
+  exit 1
+fi
+case $cmd in
+  version)
+    printf 'rclone %s\n- os/version: ubuntu 24.04 (64 bit)\n- os/kernel: 6.8.0 (x86_64)\n' "${STUB_RCLONE_VERSION:-v1.60.1}" ;;
+  lsd)
+    d=$(remote_path "${args[0]}")
+    [[ -d $d ]] || { echo "ERROR : directory not found" >&2; exit 3; }
+    find "$d" -mindepth 1 -maxdepth 1 -type d -printf '          -1 2026-10-15 00:00:00        -1 %f\n' ;;
+  mkdir)
+    mkdir -p "$(remote_path "${args[0]}")" ;;
+  copy)
+    src=${args[0]}; dst=$(remote_path "${args[1]}")
+    mkdir -p "$dst"
+    if [[ -d $src ]]; then
+      if (( exclude_dot )); then
+        find "$src" -mindepth 1 -maxdepth 1 ! -name '.*' -exec cp -R {} "$dst/" \;
+      else
+        cp -R "$src"/. "$dst/"
+      fi
+    else
+      cp "$src" "$dst/"
+    fi ;;
+  lsjson)
+    d=$(remote_path "${args[0]}")
+    [[ -d $d ]] || { echo "ERROR : directory not found" >&2; exit 3; }
+    if (( dirs_only )); then
+      find "$d" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort
+    else
+      find "$d" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort
+    fi | jq -R -s --arg base "$d" '
+      split("\n") | map(select(length > 0)) |
+      map({Path: ., Name: ., Size: -1, MimeType: "inode/directory", ModTime: "2026-10-15T00:00:00Z", IsDir: true, ID: ("id-" + .)})' ;;
+  delete)
+    d=$(remote_path "${args[0]}")
+    n=${min_age%d}
+    [[ $n =~ ^[0-9]+$ ]] || { echo "stub rclone: --min-age Nd required" >&2; exit 1; }
+    find "$d" -type f -mmin "+$((n * 1440))" -delete 2>/dev/null || true ;;
+  rmdirs)
+    d=$(remote_path "${args[0]}")
+    find "$d" -mindepth 1 -depth -type d -empty -delete 2>/dev/null || true ;;
+  lsf)
+    d=$(remote_path "${args[0]}")
+    find "$d" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort ;;
+  about|listremotes)
+    echo "${cmd}: stub" ;;
+  *)
+    echo "stub rclone: unsupported command: $cmd" >&2; exit 1 ;;
+esac

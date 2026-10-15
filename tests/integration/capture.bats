@@ -15,7 +15,7 @@ teardown_file() { stop_xvfb; }
 setup() {
   screenlog_test_setup
   load_xvfb_env
-  use_stubs hostname
+  use_stubs hostname rclone
   xprintidle_or_stub
 }
 

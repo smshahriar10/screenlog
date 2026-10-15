@@ -20,15 +20,32 @@ readonly SCREENLOG_HOME
 . "$SCREENLOG_HOME/lib/capture.sh"
 # shellcheck source=lib/sample.sh
 . "$SCREENLOG_HOME/lib/sample.sh"
+# shellcheck source=lib/drive.sh
+. "$SCREENLOG_HOME/lib/drive.sh"
+# shellcheck source=lib/upload.sh
+. "$SCREENLOG_HOME/lib/upload.sh"
+# shellcheck source=lib/retention.sh
+. "$SCREENLOG_HOME/lib/retention.sh"
 
 # shellcheck disable=SC2034  # used by the announcement (phase 5)
 SCREENLOG_VERSION=$(<"$SCREENLOG_HOME/VERSION")
 
-# daemon_sample: one sample inside the capture window, recorded and logged. Never fails.
+# daemon_sample: one sample inside the capture window, recorded, uploaded (best effort, one
+# rclone attempt, at most 5 s waiting for the lock) and logged on one line. Never fails.
 daemon_sample() {
+  local up=skipped rc=0
   sample_take
   sample_record || log_error "cannot write $(csv_path "$SAMPLE_DAY")"
-  log_info "$(sample_log_line)"
+  if [[ $SAMPLE_STATUS == shot ]]; then
+    if upload_day "$SAMPLE_DAY" quick; then
+      up=ok
+    else
+      rc=$?
+      up="failed($rc)"
+      if (( rc == 75 )); then up="skipped(lock busy)"; fi
+    fi
+  fi
+  log_info "$(sample_log_line) upload=$up${UPLOAD_ERROR:+ upload_error=\"$(log_redact_str "$UPLOAD_ERROR")\"}"
 }
 
 daemon_once() {
@@ -48,6 +65,7 @@ main() {
   config_load
   tmp_init
   mkdir -p -- "$STATE_DIR" || die "$EXIT_RUNTIME" "cannot create $STATE_DIR"
+  SCREENLOG_LOCK_WAIT=${SCREENLOG_LOCK_WAIT:-5}   # a quick upload must not stall sampling
   trap stop_children TERM INT
   case $mode in
     --once) daemon_once; exit 0 ;;
