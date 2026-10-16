@@ -184,6 +184,11 @@ coloured syntax does not smear. ffmpeg's mjpeg encoder has no libjpeg quality sc
 report links `https://drive.google.com/drive/folders/<ID>`; the ID comes from `rclone lsjson`
 and the link only works for accounts the Screenlog folder is shared with.
 
+**Why an own Google OAuth client (spec 10.2 said rclone's built-in one is fine).** rclone's
+documentation now states that its shared client ID is being retired by Google during 2026, so the
+README requires the owner's own OAuth client with a published consent screen; `install.sh` and
+`doctor` warn when `[RCLONE_REMOTE]` has no `client_id`.
+
 **Smaller decisions (spec gaps).**
 
 - The capture window is `[CAPTURE_START, CAPTURE_END)` at minute granularity: 17:50:00 is outside.
@@ -209,8 +214,20 @@ and the link only works for accounts the Screenlog folder is shared with.
   14-day window) **and** older than `LOCAL_RETENTION_DAYS`; Drive retention runs only in report
   runs that posted something (about once a day).
 - The ✅ shot is taken whenever a session appears, even outside capture hours; its CSV row is
-  written only inside the window. The announcement phase is bounded (15 minutes or a permanent
-  webhook error); sampling then starts and the announcement is retried hourly.
+  written only inside the window. The start-up announcement phase is bounded (15 minutes or a
+  permanent webhook error); afterwards the loop keeps polling for a session every 30 s inside
+  its gaps, so a later first login is still announced within about a minute. A post that failed
+  is retried after an hour; a webhook that answered 404 is not retried until the next restart.
+  The announcement shot doubles as that gap's sample.
+- The contact sheet is rendered to a dot-prefixed temp file in the day folder (excluded from
+  uploads) and renamed into place, so a concurrent daemon upload never ships a partial sheet.
+- The entry points use `#!/bin/bash` so the processes show up as `screenlogd` and `screenlog`
+  in `ps`, as the spec's transparency rule intends.
+- On an upgrade `install.sh` stops the running sampler before swapping `/opt/screenlog`; an EXIT
+  trap starts the previous version again whenever the install fails afterwards (a `die` exit
+  does not run an ERR trap). `--dry-run` never runs rclone against the installed config (it uses
+  a temp copy, so a token refresh cannot touch the PC) and defers the Drive and webhook checks
+  when rclone, jq or curl are not installed yet.
 - A contact sheet that cannot be shrunk under 8 MB posts the text with
   `⚠️ Contact sheet too large to attach`.
 - `screenlog test` shots count in the day's stats and sheet (`detail=manual test`).

@@ -29,6 +29,9 @@ This guide is for the owner. It assumes you can use a terminal but are not a Lin
 | `locked` samples (no image) while the screen is locked | Browser history, clipboard, window titles |
 | | Anything outside the capture hours, or while nobody is logged in |
 
+The capture hours apply on every day of the week; `WORK_DAYS` only decides on which days a day
+without any sample gets a "no screenshots today" notice.
+
 The screenshots live in a root-only folder on the PC for about a week and in the dedicated
 Drive for 60 days (both configurable). `docs/TEAM_NOTICE.md` is a plain-language notice you can
 adapt and share with the team before the rollout.
@@ -201,8 +204,9 @@ as well, run `install.sh --name "New Name"` (optionally with `--slug`) from the 
 **Move a PC to a new employee.**
 
 ```bash
-sudo screenlog upload                 # push every local day
-sudo screenlog report --pending       # post what is still due
+sudo screenlog upload                       # push every local day
+sudo screenlog report --pending             # post what is still due
+sudo screenlog report --date $(date +%F)    # today's report too, if before 17:30
 sudo /opt/screenlog/uninstall.sh --purge
 cd ~/screenlog-1.0.0 && sudo bash ./install.sh --name "New Person"
 ```
@@ -220,7 +224,7 @@ message again if you want a visible confirmation.
 | `sudo screenlog doctor` | PASS / WARN / FAIL for every requirement; exit 1 on any FAIL |
 | `sudo screenlog test` | takes a shot now, uploads it, posts `🧪 Test from <name>` with the image, prints timings |
 | `sudo screenlog logs` | the last 200 journal lines (add `-f` to follow) |
-| `sudo screenlog report --dry-run` | builds today's message and contact sheet in a temp dir without posting |
+| `sudo screenlog report --dry-run --date $(date +%F)` | builds today's message and contact sheet in a temp dir without posting (a plain `--dry-run` only previews what the timer would post right now) |
 | `sudo screenlog upload` | uploads every local day now |
 
 **Uninstall.**
@@ -240,7 +244,7 @@ a real PC:
 
 | What | Budget | How to check on the PC |
 |---|---|---|
-| Between samples | only a sleeping bash process: RSS under 10 MB, no CPU | `ps -o rss,pcpu,etime,cmd -C screenlogd` (RSS in kB), `systemd-cgls -u screenlog.service` (bash + sleep only) |
+| Between samples | only a sleeping bash process: RSS under 10 MB, no CPU | `ps -o rss,pcpu,etime,cmd -p "$(systemctl show -p MainPID --value screenlog)"` (RSS in kB; `ps -C screenlogd` works too), `systemd-cgls -u screenlog.service` (bash + sleep only) |
 | Each sample (capture + encode) | under 1 s wall, under 0.5 s CPU, unthrottled | `sudo /usr/bin/time -v screenlog test`: "Elapsed (wall clock)" and "User time" + "System time" (the `capture:` line prints the capture alone; the rest is the upload and the post) |
 | Each upload | rclone exits after every run; nothing stays resident | `pgrep -a rclone` prints nothing between uploads |
 | Report run | under 60 s, peak memory under 300 MB, at `Nice=19` | `systemctl show screenlog-report.service -p MemoryPeak -p CPUUsageNSec --value` after 17:30, or `sudo /usr/bin/time -v screenlog report --dry-run --date $(date +%F)` |
@@ -277,7 +281,8 @@ built with the two config files inside and copied to the PC (fresh Ubuntu 24.04,
 Wayland session, the employee logged in).
 
 1. `sudo bash ./install.sh --name "Test User" --dry-run` prints every step as "would …", exit 0,
-   and changes nothing.
+   and changes nothing (on a fresh PC the Drive and webhook checks are deferred to the real run,
+   because rclone and jq are not installed yet).
 2. `sudo bash ./install.sh --name "Test User"` exits 0; the summary shows the slug, "drive …
    reachable", "discord: webhook valid", Xorg "set now", upgrades "set now", the service active.
    Read the whole output once: no webhook URL and no token anywhere.
@@ -285,7 +290,9 @@ Wayland session, the employee logged in).
    `grep WaylandEnable /etc/gdm3/custom.conf` shows the active `WaylandEnable=false` line and the
    `.screenlog-bak` backup exists; `grep Prompt /etc/update-manager/release-upgrades` shows
    `Prompt=never`.
-4. `sudo screenlog doctor` before the reboot: everything PASS except `session` (still Wayland).
+4. `sudo screenlog doctor` before the reboot: `FAIL session` (still Wayland) is expected; `WARN`
+   lines for `last sample` (no sample yet), `time zone` and `clock sync` are acceptable here;
+   everything else PASS.
 5. Delete the bundle folder, eject the USB stick, reboot, log in.
 6. Within about a minute the ✅ message with a screenshot arrives in Discord.
    `sudo screenlog status` shows `session: x11 (…)`, the service active, no pending reports.
@@ -301,7 +308,8 @@ Wayland session, the employee logged in).
     images, then shots with large idle values, then active shots.
 11. `awk -F, 'NR>1 {print $1}' /var/lib/screenlog/shots/$(date +%F)/samples.csv` shows irregular
     gaps, all between `MIN_GAP_SECONDS` and `MAX_GAP_SECONDS`.
-12. Between samples `ps -o rss,pcpu,cmd -C screenlogd` shows RSS under 10 MB and 0.0 % CPU;
+12. Between samples `ps -o rss,pcpu,cmd -p "$(systemctl show -p MainPID --value screenlog)"`
+    shows RSS under 10 MB and 0.0 % CPU;
     `systemd-cgls -u screenlog.service` shows only bash and sleep; `pgrep rclone` is empty.
 13. The 17:30 report arrives (or set `REPORT_TIME` to a few minutes ahead with
     `sudo screenlog apply-config` and watch `systemctl list-timers screenlog-report.timer`): stats

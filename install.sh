@@ -46,10 +46,23 @@ VENDOR_DEB=""
 
 on_err() {
   log_error "install failed during step '$STEP' (line $1); nothing after this step was done"
-  if (( STOPPED_SERVICE )); then systemctl start screenlog.service 2>/dev/null || true; fi
   exit "$EXIT_RUNTIME"
 }
 trap 'on_err $LINENO' ERR
+
+# on_exit: whatever the way out (die, ERR, Ctrl-C), a sampler this run stopped is started again
+# so a failed upgrade never leaves the PC unsampled until the next reboot.
+on_exit() {
+  local rc=$?
+  if (( rc != 0 && STOPPED_SERVICE )); then
+    if systemctl start screenlog.service 2>/dev/null; then
+      log_warn "the previously installed screenlog.service was started again after this failed install"
+    else
+      log_error "screenlog.service is stopped; start it with: sudo systemctl start screenlog.service"
+    fi
+  fi
+  tmp_cleanup
+}
 
 usage() {
   cat <<USAGE
@@ -145,8 +158,13 @@ preflight() {
   fi
   for f in "$BUNDLE_CONF" "$BUNDLE_RCLONE"; do
     if [[ -f $f ]] && [[ $(stat -c %a "$f") != *00 ]]; then
-      (( OPT_DRY )) || chmod 600 "$f"
-      log_warn "$f was readable by others; it holds secrets (now 600). Delete the bundle after the install."
+      if (( OPT_DRY )); then
+        log_warn "$f is readable by others; it holds secrets (the real run sets it to 600). Delete the bundle after the install."
+      elif chmod 600 "$f" 2>/dev/null; then
+        log_warn "$f was readable by others; it holds secrets (now 600). Delete the bundle after the install."
+      else
+        log_warn "$f is readable by others and its mode cannot be changed (USB stick?); copy the bundle to the PC's disk, install from there and delete it afterwards."
+      fi
     fi
   done
   merge_config
@@ -310,7 +328,7 @@ install_files() {
 
 write_config() {
   STEP="write config"
-  local tmp keep=0
+  local tmp keep=0 check_conf rc
   if (( OPT_DRY )); then
     say "  would write $SCREENLOG_CONFIG (mode 600) with keys: ${CONFIG_KEYS[*]}"
   else
@@ -323,11 +341,28 @@ write_config() {
       SUMMARY_RCLONE_CONF="installed from the bundle"
     elif ! cmp -s <(grep -vE '^[[:space:]]*token[[:space:]]*=' "$BUNDLE_RCLONE") <(grep -vE '^[[:space:]]*token[[:space:]]*=' "$SCREENLOG_RCLONE_CONF"); then
       SUMMARY_RCLONE_CONF="replaced from the bundle (remote settings changed)"
-    elif SCREENLOG_RCLONE_TIMEOUT=60 drive_check; then
+    elif (( OPT_DRY )) && ! command -v rclone >/dev/null 2>&1; then
       keep=1
-      SUMMARY_RCLONE_CONF="kept (its refreshed token still works)"
+      SUMMARY_RCLONE_CONF="would be kept or replaced depending on whether its token still works (checked on the real run)"
     else
-      SUMMARY_RCLONE_CONF="replaced from the bundle (the installed token no longer works)"
+      # dry run: check a temp copy, so rclone's token refresh cannot rewrite the installed file
+      check_conf=$SCREENLOG_RCLONE_CONF
+      if (( OPT_DRY )); then
+        check_conf=$(mktemp "${TMPDIR:-/tmp}/rclone.conf.XXXXXX")
+        cp "$SCREENLOG_RCLONE_CONF" "$check_conf" && chmod 600 "$check_conf"
+      fi
+      rc=0
+      SCREENLOG_RCLONE_CONF=$check_conf SCREENLOG_RCLONE_TIMEOUT=60 drive_check || rc=$?
+      if (( OPT_DRY )); then rm -f -- "$check_conf"; fi
+      if (( rc == 0 )); then
+        keep=1
+        SUMMARY_RCLONE_CONF="kept (its refreshed token still works)"
+      elif (( rc == 75 || rc == 124 )); then
+        keep=1
+        SUMMARY_RCLONE_CONF="kept (Drive could not be checked right now: $DRIVE_LAST_ERR)"
+      else
+        SUMMARY_RCLONE_CONF="replaced from the bundle (the installed token no longer works)"
+      fi
     fi
     if (( keep == 0 )); then
       if (( OPT_DRY )); then
@@ -355,11 +390,18 @@ write_config() {
 
 remote_checks() {
   STEP="remote checks"
-  local rc=0 conf_for_check tmp
+  local rc=0 conf_for_check tmp src
+  if (( OPT_DRY )) && ! { command -v rclone && command -v jq && command -v curl; } >/dev/null 2>&1; then
+    say "  would check Drive ($RCLONE_REMOTE:$DRIVE_ROOT, then rclone mkdir $(drive_remote_employee)) and the Discord webhook once the packages are installed"
+    return 0
+  fi
   conf_for_check=$SCREENLOG_RCLONE_CONF
   if (( OPT_DRY )) || [[ ! -f $SCREENLOG_RCLONE_CONF ]]; then
+    # a temp copy: rclone's token refresh must not touch the bundle or, in a dry run, the PC
+    src=$BUNDLE_RCLONE
+    [[ -f $src ]] || src=$SCREENLOG_RCLONE_CONF
     tmp=$(mktemp "${TMPDIR:-/tmp}/rclone.conf.XXXXXX")
-    cp "$BUNDLE_RCLONE" "$tmp" && chmod 600 "$tmp"
+    cp "$src" "$tmp" && chmod 600 "$tmp"
     conf_for_check=$tmp
   fi
   SCREENLOG_RCLONE_CONF=$conf_for_check SCREENLOG_RCLONE_TIMEOUT=90 drive_check || rc=$?
@@ -395,10 +437,14 @@ remote_checks() {
 
 # ---- 6. and 7. GDM and release upgrades -----------------------------------------------------
 
-# edit_ini FILE SECTION KEY VALUE LABEL -> prints "set now" / "already set" (dry-run: shows a diff)
+EDIT_INI_RESULT=""
+
+# edit_ini FILE SECTION KEY VALUE LABEL: sets EDIT_INI_RESULT to "set now" / "already set"
+# (dry-run: prints the diff it would apply).
 edit_ini() {
   local file=$1 sec=$2 key=$3 val=$4 label=$5 tmp
   STEP="$label"
+  EDIT_INI_RESULT=""
   if [[ ! -e $file ]]; then
     log_warn "$file does not exist; it is created with [$sec] $key=$val"
   fi
@@ -409,24 +455,26 @@ edit_ini() {
     if (( INI_CHANGED )); then
       say "  would change $file:"
       diff -u "$file" "$tmp" 2>/dev/null | sed 's/^/    /' || true
-      printf 'set now'
+      EDIT_INI_RESULT="set now"
     else
-      printf 'already set'
+      EDIT_INI_RESULT="already set"
     fi
     rm -f -- "$tmp" "$tmp.screenlog-bak"
     return 0
   fi
   ini_set_key "$file" "$sec" "$key" "$val" || die "$EXIT_SYSTEM" "cannot edit $file"
   [[ $(ini_get_key "$file" "$sec" "$key" || true) == "$val" ]] || die "$EXIT_SYSTEM" "$file: $key=$val not in effect after the edit"
-  if (( INI_CHANGED )); then printf 'set now'; else printf 'already set'; fi
+  if (( INI_CHANGED )); then EDIT_INI_RESULT="set now"; else EDIT_INI_RESULT="already set"; fi
 }
 
 force_xorg() {
-  SUMMARY_XORG=$(edit_ini "$PATH_GDM_CONF" daemon WaylandEnable false "force Xorg")
+  edit_ini "$PATH_GDM_CONF" daemon WaylandEnable false "force Xorg"
+  SUMMARY_XORG=$EDIT_INI_RESULT
 }
 
 block_release_upgrades() {
-  SUMMARY_UPGRADES=$(edit_ini "$PATH_RELEASE_UPGRADES" DEFAULT Prompt never "block release upgrades")
+  edit_ini "$PATH_RELEASE_UPGRADES" DEFAULT Prompt never "block release upgrades"
+  SUMMARY_UPGRADES=$EDIT_INI_RESULT
 }
 
 # ---- 8. units -------------------------------------------------------------------------------
@@ -521,6 +569,7 @@ main() {
   fi
   paths_init
   tmp_init
+  trap on_exit EXIT
   SCREENLOG_VERSION=$(<"$BUNDLE_DIR/VERSION")
   SCREENLOG_LOCK_WAIT=${SCREENLOG_LOCK_WAIT:-60}
   if (( OPT_DRY )); then

@@ -93,23 +93,25 @@ sheet_render() {
 # JPEG fits SCREENLOG_MAX_SHEET_BYTES (8 MB). Returns 1 without shots, 2 when it cannot fit even
 # with 120 px tiles (the report then posts without an attachment).
 sheet_build() {
-  local day=$1 csv=$2 out=$3 manifest=${4:-} tw=${SCREENLOG_TILE_WIDTH:-320} max=${SCREENLOG_MAX_SHEET_BYTES:-8388608} rc
+  local day=$1 csv=$2 out=$3 manifest=${4:-} tw=${SCREENLOG_TILE_WIDTH:-320} max=${SCREENLOG_MAX_SHEET_BYTES:-8388608} rc tmp
   SHEET_SIZE=0
+  # a dot-prefixed temp file in the target folder: rclone copy excludes '.*', and mv stays atomic
+  tmp=$(mktemp -p "${out%/*}" .contact-sheet.XXXXXX) || return 2
   while (( tw >= 120 )); do
     rc=0
-    sheet_render "$day" "$csv" "$out.tmp" "$tw" "$manifest" || rc=$?
+    sheet_render "$day" "$csv" "$tmp" "$tw" "$manifest" || rc=$?
     if (( rc != 0 )); then
-      rm -f -- "$out.tmp"
+      rm -f -- "$tmp"
       return "$rc"
     fi
-    SHEET_SIZE=$(stat -c %s "$out.tmp")
+    SHEET_SIZE=$(stat -c %s "$tmp")
     if (( SHEET_SIZE <= max )); then
-      mv -f -- "$out.tmp" "$out"
+      mv -f -- "$tmp" "$out"
       return 0
     fi
     log_info "sheet: $SHEET_SIZE bytes exceed $max, shrinking tiles from ${tw}px"
     tw=$(( tw * 4 / 5 ))
   done
-  rm -f -- "$out.tmp"
+  rm -f -- "$tmp"
   return 2
 }

@@ -38,7 +38,12 @@ expect_config_error() {   # expect_config_error PARTIAL: config_check fails and 
 }
 
 @test "config: missing optional keys get their defaults" {
+  set_config SHOTS_PER_HOUR 9 WORK_DAYS Fri UPLOAD_BWLIMIT off RCLONE_REMOTE other
+  config_load
+  assert_equal "$SHOTS_PER_HOUR" 9
   unset_config SHOTS_PER_HOUR WORK_DAYS UPLOAD_BWLIMIT RCLONE_REMOTE
+  run grep -c '^SHOTS_PER_HOUR=' "$SCREENLOG_CONFIG"
+  assert_output 0
   config_load
   assert_equal "$SHOTS_PER_HOUR" 7
   assert_equal "$WORK_DAYS" "Sun Mon Tue Wed Thu"
@@ -63,7 +68,8 @@ expect_config_error() {   # expect_config_error PARTIAL: config_check fails and 
 
 @test "config: webhook URL formats" {
   local bad
-  for bad in "http://discord.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyz" \
+  for bad in "http://discord.com/api/webhooks/123456789012345678/TESTtoken_abcdefghijklmnopqrstuvwxyz0123456789-ABCDEFGHIJKLMNOPQRSTUVWX" \
+             "https://discord.com/api/webhooks/123456789012345678/abc.def.ghi.jkl.mno.pqr.stu" \
              "https://example.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyz" \
              "https://discord.com/api/webhooks/notanumber/abcdefghijklmnopqrstuvwxyz" \
              "https://discord.com/api/webhooks/123456789012345678/short" \
@@ -167,7 +173,6 @@ expect_config_error() {   # expect_config_error PARTIAL: config_check fails and 
   expect_config_error "EMPLOYEE_NAME: must be 1 to 80 characters"
   set_config EMPLOYEE_NAME ""
   expect_config_error "EMPLOYEE_NAME: must be 1 to 80 characters"
-  append_config_line "EMPLOYEE_NAME='Say \"hi\"'"
   cp "$REPO_ROOT/tests/fixtures/screenlog.conf" "$SCREENLOG_CONFIG"
   unset_config EMPLOYEE_NAME
   append_config_line "EMPLOYEE_NAME='Say \"hi\"'"
@@ -270,6 +275,30 @@ CONF
   run config_check "$BATS_TEST_TMPDIR/nope.conf"
   assert_failure
   assert_output --partial "cannot read $BATS_TEST_TMPDIR/nope.conf"
+}
+
+@test "config: leading zeros are accepted and normalised" {
+  set_config MIN_GAP_SECONDS 08 JPEG_QUALITY 085
+  config_load
+  assert_equal "$MIN_GAP_SECONDS" 8
+  assert_equal "$JPEG_QUALITY" 85
+  run gap_draw 3
+  assert_success
+}
+
+@test "config: the example config parses and only lacks the per-PC keys and the webhook" {
+  config_defaults
+  config_parse_file "$REPO_ROOT/config/screenlog.conf.example"
+  assert_equal "${#CONFIG_ERRORS[@]}" 0
+  run config_validate
+  assert_failure
+  config_validate || true
+  assert_equal "${#CONFIG_ERRORS[@]}" 3
+  local k
+  for k in "${CONFIG_KEYS[@]}"; do
+    run grep -cE "^#? ?$k=" "$REPO_ROOT/config/screenlog.conf.example"
+    assert_output 1
+  done
 }
 
 @test "config: config_write round-trips every key with mode 600 and refuses bad characters" {

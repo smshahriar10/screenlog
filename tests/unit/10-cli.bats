@@ -25,6 +25,16 @@ setup() {
   run screenlog bogus
   assert_failure 2
   assert_output --partial "unknown command: bogus"
+  # a real PC: no SCREENLOG_* variables at all
+  run env -i PATH="$PATH" "$REPO_ROOT/bin/screenlog" help
+  assert_success
+  assert_output --partial "Usage: screenlog"
+  assert_output --partial "Config: /etc/screenlog/screenlog.conf"
+  run env -i PATH="$PATH" "$REPO_ROOT/bin/screenlog"
+  assert_success
+  assert_output --partial "Usage: screenlog"
+  run env -i PATH="$PATH" "$REPO_ROOT/bin/screenlog" bogus
+  assert_failure 2
 }
 
 @test "cli: every command but version and help refuses a non-root caller before reading anything" {

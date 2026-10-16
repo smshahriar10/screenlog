@@ -140,6 +140,15 @@ dev-pc-03 · v1.0.0"
   run sed -n '2p' "$dir/tiles.tsv"
   assert_output --partial $'1\t09-12-33.jpg\t09:12 · active\tactive\t'
   assert_equal "$(grep -c $'\tidle\t' "$dir/tiles.tsv")" 9
+  # the first idle row of the fixture, caption text computed independently of the code under test
+  local row ts idle f hhmm
+  row=$(awk -F, 'NR > 1 && $2 == "shot" && $3 + 0 >= 300 { print; exit }' "$SCREENLOG_DATA_DIR/shots/2026-10-15/samples.csv")
+  IFS=, read -r ts _ idle f _ <<< "$row"
+  hhmm=${ts:11:5}
+  run grep -c $'\t'"$f"$'\t'"$hhmm · idle $(( idle / 60 ))m"$'\tidle\t' "$dir/tiles.tsv"
+  assert_output 1
+  run find "$SCREENLOG_DATA_DIR/shots/2026-10-15" "$dir" -name '*.tmp' -o -name '.contact-sheet.*'
+  assert_output ""
   find "$SCREENLOG_DATA_DIR" -printf '%p %s\n' | sort > "$BATS_TEST_TMPDIR/after"
   run diff "$BATS_TEST_TMPDIR/before" "$BATS_TEST_TMPDIR/after"
   assert_success
@@ -157,6 +166,8 @@ dev-pc-03 · v1.0.0"
   make_day 2026-10-15 day-normal.csv
   run screenlog report --pending
   assert_success
+  run find "$SCREENLOG_DATA_DIR/shots/2026-10-15" -name '*.tmp' -o -name '.contact-sheet.*'
+  assert_output ""
   local c1
   c1=$(cksum < "$SCREENLOG_DATA_DIR/shots/2026-10-15/contact-sheet.jpg")
   use_stubs loginctl runuser gdbus xprintidle ffmpeg
@@ -233,6 +244,18 @@ dev-pc-03 · v1.0.0"
   assert_output --partial "must run as root"
   run setpriv --reuid=65534 --regid=65534 --clear-groups "$REPO_ROOT/bin/screenlog" version
   assert_success
+}
+
+@test "discord: the production backoff default is 60 240 600 and respects the deadline" {
+  tmp_init
+  DISCORD_DEADLINE=$(( EPOCHSECONDS + 1 ))
+  # shellcheck disable=SC2016  # the inner bash expands $1 and $2 itself
+  STUB_CURL_PLAN="7 7 7 7" run env -u SCREENLOG_DISCORD_BACKOFF bash -c 'source "$1/lib/log.sh"; source "$1/lib/config.sh"; source "$1/lib/time.sh"; source "$1/lib/discord.sh"; config_load; SCREENLOG_TMP=$2; DISCORD_DEADLINE=$(( EPOCHSECONDS + 1 )); discord_post hi; echo "kind=$DISCORD_LAST_KIND"' _ "$REPO_ROOT" "$SCREENLOG_TMP"
+  assert_output --partial "attempt 1 failed (curl exit 7"
+  assert_output --partial "retrying in 60s"
+  assert_output --partial "kind=deadline"
+  assert_equal "$(stub_calls curl)" 1
+  tmp_cleanup
 }
 
 @test "discord: validation GETs the webhook and never prints the body" {

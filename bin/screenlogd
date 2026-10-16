@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # screenlogd - screenlog sampler daemon (spec section 5.1).
 #   screenlogd            the service: first-run announcement, then the sampling loop forever
 #   screenlogd --once     one sample now (best-effort upload), exit 0
@@ -37,6 +37,7 @@ SCREENLOG_VERSION=$(<"$SCREENLOG_HOME/VERSION")
 # rclone attempt, at most 5 s waiting for the lock) and logged on one line. Never fails.
 daemon_sample() {
   local up=skipped rc=0
+  UPLOAD_ERROR=""
   sample_take
   sample_record || log_error "cannot write $(csv_path "$SAMPLE_DAY")"
   if [[ $SAMPLE_STATUS == shot ]]; then
@@ -48,7 +49,11 @@ daemon_sample() {
       if (( rc == 75 )); then up="skipped(lock busy)"; fi
     fi
   fi
-  log_info "$(sample_log_line) upload=$up${UPLOAD_ERROR:+ upload_error=\"$(log_redact_str "$UPLOAD_ERROR")\"}"
+  if [[ $up == failed* ]]; then
+    log_info "$(sample_log_line) upload=$up upload_error=\"$(log_redact_str "$UPLOAD_ERROR")\""
+  else
+    log_info "$(sample_log_line) upload=$up"
+  fi
 }
 
 daemon_once() {
@@ -59,12 +64,22 @@ daemon_once() {
   daemon_sample
 }
 
+ANNOUNCE_RECORDED=0
+ANNOUNCE_LAST_STATUS=""
+
+# daemon_announce_pending: the ✅ message still has to be sent (and the webhook is not dead).
+daemon_announce_pending() {
+  [[ ! -f $STATE_DIR/setup-announced && -z ${SCREENLOG_SKIP_ANNOUNCE:-} ]] && (( DISCORD_DEAD == 0 ))
+}
+
 # daemon_announce BOUND_SECONDS: the first-run announcement (spec 5.1.2). Polls for a capturable
 # session every SCREENLOG_ANNOUNCE_INTERVAL seconds, takes one shot (reused for up to 10 minutes
 # of retries), uploads it and posts the message once; the flag is created only after a 2xx.
-# Returns 0 when posted, 1 when the bound ran out, the webhook is rejected or a stop came.
+# Returns 0 when posted, 2 when BOUND is 0 and no session could be captured, 1 when the bound
+# ran out, the webhook is rejected or a stop came. ANNOUNCE_RECORDED=1 says a CSV row was written.
 daemon_announce() {
   local bound=${1:-900} shot_epoch=0 img="$SCREENLOG_TMP/announce.jpg" interval deadline posted=0
+  ANNOUNCE_RECORDED=0
   interval=$(awk -v i="${SCREENLOG_ANNOUNCE_INTERVAL:-30}" 'BEGIN { if (i + 0 < 0.2) i = 0.2; print i + 0 }')
   deadline=$(( EPOCHSECONDS + bound ))
   while (( RUN_STOP == 0 )); do
@@ -73,6 +88,7 @@ daemon_announce() {
       if [[ $SAMPLE_STATUS == shot ]]; then
         if time_in_window "$CAPTURE_START" "$CAPTURE_END"; then
           sample_record || log_error "cannot write $(csv_path "$SAMPLE_DAY")"
+          ANNOUNCE_RECORDED=1
         fi
         upload_day "$SAMPLE_DAY" quick || log_warn "announce: upload failed ($(log_redact_str "$UPLOAD_ERROR"))"
         if discord_prepare_image "$SHOTS_DIR/$SAMPLE_DAY/$SAMPLE_FILE" "$img"; then
@@ -81,7 +97,11 @@ daemon_announce() {
           log_warn "announce: cannot prepare the image"
         fi
       else
-        log_info "announce: waiting for a capturable session (status=$SAMPLE_STATUS${SAMPLE_DETAIL:+: $SAMPLE_DETAIL})"
+        if [[ $ANNOUNCE_LAST_STATUS != "$SAMPLE_STATUS" ]]; then
+          log_info "announce: waiting for a capturable session (status=$SAMPLE_STATUS${SAMPLE_DETAIL:+: $SAMPLE_DETAIL})"
+          ANNOUNCE_LAST_STATUS=$SAMPLE_STATUS
+        fi
+        if (( bound == 0 )); then return 2; fi
       fi
     fi
     if (( shot_epoch > 0 )); then
@@ -99,7 +119,9 @@ daemon_announce() {
       esac
     fi
     if (( EPOCHSECONDS >= deadline )); then
-      log_warn "announce: not posted yet; sampling starts, the announcement is retried hourly"
+      if (( bound > 0 )); then
+        log_warn "announce: not posted yet; sampling starts, the announcement is retried as soon as a session is seen"
+      fi
       return 1
     fi
     sleep_interruptible "$interval" || return 1
@@ -108,18 +130,30 @@ daemon_announce() {
 }
 
 # daemon_loop: forever - random gap, skip silently outside the window, else one sample. While the
-# first-run flag is absent, the announcement is retried at most hourly from here.
+# first-run flag is absent the gap is slept in 30 s slices so a session that appears is announced
+# within a minute (a failed post is retried hourly, a dead webhook never).
 daemon_loop() {
-  local gap next_announce=0
+  local gap slice rc next_announce=0
   while (( RUN_STOP == 0 )); do
     gap=$(gap_next)
-    sleep_interruptible "$gap" || break
-    if [[ ! -f $STATE_DIR/setup-announced && -z ${SCREENLOG_SKIP_ANNOUNCE:-} ]] && (( EPOCHSECONDS >= next_announce )); then
-      next_announce=$(( EPOCHSECONDS + 3600 ))
-      daemon_announce 0 || true
+    ANNOUNCE_RECORDED=0
+    if daemon_announce_pending; then
+      while (( gap > 0 && RUN_STOP == 0 )); do
+        slice=$(( gap < 30 ? gap : 30 ))
+        sleep_interruptible "$slice" || break
+        gap=$(( gap - slice ))
+        daemon_announce_pending || break
+        (( EPOCHSECONDS >= next_announce )) || continue
+        rc=0
+        daemon_announce 0 || rc=$?
+        if (( rc == 1 )); then next_announce=$(( EPOCHSECONDS + 3600 )); fi
+      done
       (( RUN_STOP == 0 )) || break
+    else
+      sleep_interruptible "$gap" || break
     fi
     time_in_window "$CAPTURE_START" "$CAPTURE_END" || continue
+    if (( ANNOUNCE_RECORDED )); then continue; fi   # the announcement shot was this gap's sample
     daemon_sample
   done
   log_info "screenlogd stopping"
@@ -141,7 +175,7 @@ main() {
     --announce) daemon_announce "${SCREENLOG_ANNOUNCE_BOUND:-900}"; exit ;;
   esac
   log_info "screenlogd v$SCREENLOG_VERSION starting (window $CAPTURE_START-$CAPTURE_END, ~$SHOTS_PER_HOUR shots/h)"
-  if [[ ! -f $STATE_DIR/setup-announced && -z ${SCREENLOG_SKIP_ANNOUNCE:-} ]]; then
+  if daemon_announce_pending; then
     daemon_announce "${SCREENLOG_ANNOUNCE_BOUND:-900}" || true
   fi
   daemon_loop

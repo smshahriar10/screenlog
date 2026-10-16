@@ -117,6 +117,49 @@ cpu_ticks() { cut -d')' -f2 "/proc/$1/stat" | awk '{ print $12 + $13 }'; }
   assert_equal "$(curl_posts)" 1
 }
 
+@test "daemon: a login after the start-up bound is still announced within seconds" {
+  rm -f "$SCREENLOG_DATA_DIR/state/setup-announced"
+  unset SCREENLOG_DISPLAY SCREENLOG_NOW                     # real clock: timestamps must differ
+  export STUB_LOGINCTL_SCENARIO_FILE="$BATS_TEST_TMPDIR/scenario" SCREENLOG_ANNOUNCE_BOUND=1
+  printf 'none' > "$STUB_LOGINCTL_SCENARIO_FILE"
+  env -i DISPLAY=:9 sleep 60 </dev/null >/dev/null 2>&1 3>&- &
+  local p=$!
+  export SCREENLOG_SESSION_PIDS=$p
+  set_config MIN_GAP_SECONDS 2 MAX_GAP_SECONDS 2 GAP_ALERT_MINUTES 1 CAPTURE_START 00:00 CAPTURE_END 23:59
+  local csv
+  csv="$SCREENLOG_DATA_DIR/shots/$(date +%F)/samples.csv"
+  start_daemon
+  sleep 2.5                                 # the bound (1 s) is over; the loop is sleeping its gap
+  run cat "$BATS_TEST_TMPDIR/daemon.log"
+  assert_output --partial "announce: not posted yet; sampling starts"
+  assert_equal "$(curl_posts)" 0
+  printf 'x11' > "$STUB_LOGINCTL_SCENARIO_FILE"
+  local i
+  for i in $(seq 1 40); do [ -f "$SCREENLOG_DATA_DIR/state/setup-announced" ] && break; sleep 0.25; done
+  assert_file_exists "$SCREENLOG_DATA_DIR/state/setup-announced"
+  assert_equal "$(curl_posts)" 1
+  sleep 2.5
+  assert_equal "$(curl_posts)" 1
+  run grep -c ',shot,' "$csv"
+  (( output >= 1 ))
+  # the announcement shot was that gap's sample: no two shots within the same second
+  run awk -F, 'NR > 1 { if ($1 == prev) dup = 1; prev = $1 } END { exit dup }' "$csv"
+  assert_success
+  kill "$p" 2>/dev/null || true
+}
+
+@test "daemon: the announcement shot outside capture hours is uploaded but not recorded" {
+  rm -f "$SCREENLOG_DATA_DIR/state/setup-announced"
+  set_now "2026-10-15T20:00:00+06:00"
+  run screenlogd --announce
+  assert_success
+  assert_equal "$(curl_posts)" 1
+  assert_file_exists "$SCREENLOG_DATA_DIR/state/setup-announced"
+  assert_file_exists "$SCREENLOG_DATA_DIR/shots/2026-10-15/20-00-00.jpg"
+  assert_file_exists "$STUB_REMOTE_DIR/Screenlog/rahim-uddin/2026-10-15/20-00-00.jpg"
+  assert_file_not_exists "$SCREENLOG_DATA_DIR/shots/2026-10-15/samples.csv"
+}
+
 @test "daemon: --announce alone posts and creates the flag; a network failure leaves no flag" {
   rm -f "$SCREENLOG_DATA_DIR/state/setup-announced"
   run screenlogd --announce
@@ -127,6 +170,6 @@ cpu_ticks() { cut -d')' -f2 "/proc/$1/stat" | awk '{ print $12 + $13 }'; }
   STUB_CURL_PLAN="7 7 7 7 7 7 7 7 7 7" SCREENLOG_ANNOUNCE_BOUND=1 run screenlogd --announce
   assert_failure 1
   assert_output --partial "announce: post failed (curl exit 7"
-  assert_output --partial "retried hourly"
+  assert_output --partial "retried as soon as a session is seen"
   assert_file_not_exists "$SCREENLOG_DATA_DIR/state/setup-announced"
 }

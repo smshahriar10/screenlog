@@ -85,6 +85,19 @@ setup() {
   assert_line "doctor: 0 warning(s), 3 failure(s)"
 }
 
+@test "doctor: missing packages and low disk space are reported" {
+  use_stubs dpkg-query df
+  STUB_DPKG_INSTALLED="ffmpeg curl jq" run screenlog doctor
+  assert_failure 1
+  assert_line --partial "FAIL packages: missing: xprintidle imagemagick x11-utils fonts-dejavu-core libglib2.0-bin"
+  STUB_DPKG_INSTALLED=all STUB_DF_MB=400 run screenlog doctor
+  assert_failure 1
+  assert_line --partial "FAIL disk: 400 MB free on $SCREENLOG_DATA_DIR (less than 500 MB)"
+  STUB_DPKG_INSTALLED=all STUB_DF_MB=1500 run screenlog doctor
+  assert_success
+  assert_line --partial "WARN disk: 1500 MB free on $SCREENLOG_DATA_DIR (less than 2 GB)"
+}
+
 @test "doctor: the shared rclone client_id is a warning, a missing remote section a failure" {
   printf '[screenlog-gdrive]\ntype = drive\nscope = drive\ntoken = {"access_token":"x"}\n' > "$SCREENLOG_RCLONE_CONF"
   run screenlog doctor

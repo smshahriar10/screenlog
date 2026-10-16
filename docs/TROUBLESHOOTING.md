@@ -112,8 +112,9 @@ deletes anything it has not uploaded.
 3. `sudo screenlog logs` shows what the last run did. A day that could not be posted stays
    pending and is retried every hour; the PC being off at 17:30 posts the report shortly after the
    next boot (`Persistent=true`).
-4. `sudo screenlog report --dry-run` builds the message and the contact sheet without posting and
-   prints where it put them.
+4. `sudo screenlog report --dry-run --date $(date +%F)` builds today's message and contact sheet
+   without posting and prints where it put them (a plain `--dry-run` only previews what the timer
+   would post right now, which before `REPORT_TIME` is "nothing to do").
 
 ## Reading `doctor` output
 

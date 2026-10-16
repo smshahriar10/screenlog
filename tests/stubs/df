@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# stub: df --output=avail -BM PATH -> STUB_DF_MB (default 100000)
+set -euo pipefail
+{ printf '%q ' "$0" "$@"; printf '\n'; } >>"${STUB_LOG_DIR:?}/df.log"
+printf 'Avail\n%sM\n' "${STUB_DF_MB:-100000}"

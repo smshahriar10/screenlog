@@ -13,7 +13,7 @@ exactly what it does and does not do.
   — roughly one every 8 to 9 minutes, never on a fixed schedule.
 - With each screenshot, **how long the keyboard and mouse have been idle**. A screenshot counts as
   "active" when you used the PC in the last 5 minutes.
-- Only during **capture hours: [09:00] to [17:50]**, [Sunday to Thursday] included. Outside those
+- Only during **capture hours: [09:00] to [17:50]**, on any day you use the PC. Outside those
   hours nothing is captured.
 - When the screen is **locked**, nothing is captured; the program only notes "locked".
 

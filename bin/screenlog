@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # screenlog - the operator CLI (spec section 7).
 set -uo pipefail
 export LC_ALL=C.UTF-8
@@ -367,6 +367,7 @@ cli_logs() {
 main() {
   local cmd=${1:-help}
   shift || true
+  paths_init   # help and usage messages name the config path
   case $cmd in
     version) printf '%s\n' "$SCREENLOG_VERSION"; exit 0 ;;
     help|-h|--help) cli_help; exit 0 ;;
@@ -378,7 +379,6 @@ main() {
   CONFIG_ERROR_COUNT=0
   case $cmd in
     status|doctor)
-      paths_init
       if ! config_check "$SCREENLOG_CONFIG"; then
         CONFIG_OK=0
         CONFIG_ERROR_COUNT=${#CONFIG_ERRORS[@]}

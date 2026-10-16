@@ -155,6 +155,11 @@ setup() {
   STUB_RCLONE_FAIL=lsd run "$BUNDLE/install.sh" --name "Rahim Uddin"
   assert_failure 7
   assert_output --partial "Drive check failed"
+  assert_output --partial "screenlog.service was started again after this failed install"
+  run tail -n1 "$STUB_LOG_DIR/systemctl.log"
+  assert_output --regexp 'systemctl start screenlog.service $'
+  run cat "$STUB_LOG_DIR/systemctl.log"
+  assert_line --regexp 'systemctl stop screenlog.service $'
   rm -rf "$STUB_REMOTE_DIR/Screenlog"
   run "$BUNDLE/install.sh" --name "Rahim Uddin"
   assert_failure 7
@@ -190,6 +195,23 @@ setup() {
   stub_reset curl
   STUB_CURL_PLAN="200 200 404" run "$BUNDLE/install.sh" --name "Rahim Uddin" --dry-run
   assert_failure 7
+}
+
+@test "install: --dry-run on a fresh PC without rclone, jq or curl defers the remote checks and exits 0" {
+  local fakebin="$BATS_TEST_TMPDIR/fakebin" f
+  mkdir -p "$fakebin"
+  for f in /usr/bin/* /bin/*; do [ -x "$f" ] && ln -sf "$f" "$fakebin/${f##*/}"; done
+  rm -f "$fakebin/rclone" "$fakebin/jq" "$fakebin/curl" "$SCREENLOG_TEST_BASE/bin/rclone" "$SCREENLOG_TEST_BASE/bin/curl"
+  PATH="$SCREENLOG_TEST_BASE/bin:$fakebin" run "$BUNDLE/install.sh" --name "Rahim Uddin" --dry-run
+  assert_success
+  assert_output --partial "curl not found; internet check skipped"
+  assert_output --partial "would run: apt-get install -y"
+  assert_output --partial "rclone not installed yet; its version is checked on the real run"
+  assert_output --partial "would check Drive (screenlog-gdrive:Screenlog"
+  assert_output --partial "[dry-run] nothing was changed."
+  assert_output --regexp 'xorg +WaylandEnable=false in [^ ]+ \(set now; backup'
+  run grep -c '^  would change ' <<< "$output"
+  assert_output 2
 }
 
 @test "install: a vendor rclone .deb is verified and installed instead of the apt package" {

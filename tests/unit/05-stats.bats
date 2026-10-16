@@ -44,6 +44,10 @@ stats_of() {   # stats_of FIXTURE -> report_stats output
   assert_line "shots=3"
   assert_line "active=2"
   assert_line "active_pct=67"
+  run stats_of day-half.csv      # 1 of 8 = 12.5 -> 13, not banker's 12
+  assert_line "shots=8"
+  assert_line "active=1"
+  assert_line "active_pct=13"
 }
 
 @test "stats: gaps count every pause strictly longer than GAP_ALERT_MINUTES between any samples" {
